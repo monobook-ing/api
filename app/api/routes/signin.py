@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 from postgrest.exceptions import APIError
@@ -18,6 +19,7 @@ from app.services.resend import (
     send_welcome_email,
 )
 from app.schemas.magic_link import MagicLinkRequest, MagicLinkResponse, MagicLinkConfirm
+from app.schemas.google_auth import GoogleAuthRequest
 from app.schemas.notification import NotificationType
 from app.core.security import create_access_token
 from app.core.config import get_settings
@@ -396,4 +398,218 @@ async def confirm_magic_link(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred during authentication"
+        ) from exc
+
+
+@router.post("/signin/google", status_code=status.HTTP_200_OK)
+async def google_signin(
+    payload: GoogleAuthRequest,
+    client: Client = Depends(get_supabase),
+) -> dict:
+    """Authenticate via Google OAuth2 authorization code."""
+    settings = get_settings()
+
+    if not settings.google_client_id or not settings.google_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google OAuth is not configured on this server",
+        )
+
+    try:
+        # Exchange authorization code for tokens
+        async with httpx.AsyncClient() as http:
+            token_resp = await http.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": payload.code,
+                    "client_id": settings.google_client_id,
+                    "client_secret": settings.google_client_secret,
+                    "redirect_uri": payload.redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+
+        if token_resp.status_code != 200:
+            logger.error("Google token exchange failed: %s", token_resp.text)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Failed to exchange Google authorization code",
+            )
+
+        token_data = token_resp.json()
+        id_token_str = token_data.get("id_token")
+        if not id_token_str:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="No id_token in Google response",
+            )
+
+        # Verify the ID token with Google
+        async with httpx.AsyncClient() as http:
+            userinfo_resp = await http.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"id_token": id_token_str},
+            )
+
+        if userinfo_resp.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Failed to verify Google ID token",
+            )
+
+        google_user = userinfo_resp.json()
+        email = google_user.get("email")
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google account has no email",
+            )
+
+        # Verify the audience matches our client ID
+        if google_user.get("aud") != settings.google_client_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token audience mismatch",
+            )
+
+        first_name = google_user.get("given_name") or email.split("@")[0]
+        last_name = google_user.get("family_name")
+
+        # Check if user exists
+        user = await get_user_by_email(client, email)
+        membership_status: str | None = None
+
+        if not user:
+            # Create new user
+            user_data = {"email": email, "first_name": first_name}
+            if last_name:
+                user_data["last_name"] = last_name
+            user_response = client.table("users").insert(user_data).execute()
+
+            if not user_response.data or len(user_response.data) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create user",
+                )
+
+            user = user_response.data[0]
+            user_id = user["id"]
+
+            # Create default account
+            account_data = {
+                "name": f"{first_name}'s Account",
+                "is_default": True,
+                "created_by": user_id,
+                "updated_by": user_id,
+            }
+            account_response = client.table("accounts").insert(account_data).execute()
+
+            if not account_response.data or len(account_response.data) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create account",
+                )
+
+            account = account_response.data[0]
+
+            # Create team member with admin role
+            team_member_data = {
+                "account_id": account["id"],
+                "user_id": user_id,
+                "role": "admin",
+                "status": "accepted",
+                "created_by": user_id,
+            }
+            client.table("team_members").insert(team_member_data).execute()
+
+            membership_status = "accepted"
+
+            # Send welcome email
+            try:
+                await send_welcome_email(recipient=email, first_name=first_name)
+            except (ResendConfigurationError, ResendSendError) as exc:
+                logger.warning("Failed to send welcome email for Google user: %s", exc)
+
+            # Create welcome notification
+            welcome_subject = f"Welcome to {settings.app_name}!"
+            body = f"Thanks for joining {settings.app_name}! We're glad you're here."
+            await create_notification(
+                client,
+                user_id=user["id"],
+                subject=welcome_subject,
+                body=body,
+                notification_type=NotificationType.WELCOME,
+                details=body,
+                cta=None,
+            )
+        else:
+            # Update name from Google if missing
+            updates = {}
+            if not user.get("first_name") and first_name:
+                updates["first_name"] = first_name
+            if not user.get("last_name") and last_name:
+                updates["last_name"] = last_name
+            if updates:
+                client.table("users").update(updates).eq("id", user["id"]).execute()
+
+            # Handle invited memberships (same logic as magic link)
+            invited_memberships = (
+                client.table("team_members")
+                .select("id, status, created_by, account_id")
+                .eq("user_id", user["id"])
+                .is_("deleted_at", "null")
+                .execute()
+            )
+
+            if invited_memberships.data:
+                has_invited = any(
+                    m.get("status") == "invited" for m in invited_memberships.data
+                )
+                has_rejected = any(
+                    m.get("status") == "rejected" for m in invited_memberships.data
+                )
+
+                if has_invited:
+                    (
+                        client.table("team_members")
+                        .update({"status": "accepted"})
+                        .eq("user_id", user["id"])
+                        .eq("status", "invited")
+                        .is_("deleted_at", "null")
+                        .execute()
+                    )
+                    membership_status = "accepted"
+                elif has_rejected:
+                    membership_status = "rejected"
+
+        # Create JWT
+        access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+        access_token = create_access_token(
+            data={"sub": user["email"], "user_id": user["id"]},
+            expires_delta=access_token_expires,
+        )
+
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user["id"],
+                "email": user["email"],
+                "name": user.get("first_name"),
+                "team_member_status": membership_status,
+            },
+        }
+
+    except HTTPException:
+        raise
+    except APIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {exc.message if hasattr(exc, 'message') else str(exc)}",
+        ) from exc
+    except Exception as exc:
+        logger.exception("Unexpected error during Google sign-in")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during Google authentication",
         ) from exc
