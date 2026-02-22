@@ -1,7 +1,21 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, protected, public, signin, users, team_members, notifications
+from app.api.routes import (
+    public,
+    signin,
+    users,
+    team_members,
+    notifications,
+    properties,
+    rooms,
+    bookings,
+    audit,
+    host_profile,
+    knowledge_files,
+    settings_connections,
+    seed,
+)
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -23,12 +37,22 @@ async def ping() -> dict[str, str]:
     return {"status": "ok"}
 
 
-# Include routers
-app.include_router(protected.router)
+# Include routers — public & auth
+app.include_router(public.router)
 app.include_router(signin.router)
 app.include_router(users.router)
 app.include_router(team_members.router)
 app.include_router(notifications.router)
+
+# Include routers — hotel domain
+app.include_router(properties.router)
+app.include_router(rooms.router)
+app.include_router(bookings.router)
+app.include_router(audit.router)
+app.include_router(host_profile.router)
+app.include_router(knowledge_files.router)
+app.include_router(settings_connections.router)
+app.include_router(seed.router)
 
 
 @app.get("/", tags=["public"])
