@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     magic_link_base_url: str | None = None
     skip_emails: bool = Field(False, env="SKIP_EMAILS")
 
+    # Google OAuth
+    google_client_id: str | None = Field(None, env="GOOGLE_CLIENT_ID")
+    google_client_secret: str | None = Field(None, env="GOOGLE_CLIENT_SECRET")
+
     @model_validator(mode="after")
     def validate_supabase(self):
         if not self.supabase_url or not self.supabase_service_key:
