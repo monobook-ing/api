@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8">
+  <title>Log in to epicTwin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!--[if mso]>
+  <style type="text/css">
+    body, table, td, a { font-family: Arial, sans-serif !important; }
+  </style>
+  <![endif]-->
+
+  <style type="text/css">
+    /* General resets */
+    html, body {
+      margin: 0 !important;
+      padding: 0 !important;
+      height: 100% !important;
+      width: 100% !important;
+    }
+    * {
+      -ms-text-size-adjust: 100%;
+      -webkit-text-size-adjust: 100%;
+    }
+    table, td {
+      border-collapse: collapse !important;
+      mso-table-lspace: 0pt;
+      mso-table-rspace: 0pt;
+    }
+    img {
+      border: 0;
+      line-height: 100%;
+      outline: none;
+      text-decoration: none;
+      -ms-interpolation-mode: bicubic;
+      display: block;
+    }
+    a {
+      text-decoration: none;
+    }
+    /* Mobile tweaks */
+    @media screen and (max-width: 600px) {
+      .container {
+        width: 100% !important;
+      }
+      .main-card {
+        border-radius: 0 !important;
+      }
+      .stack {
+        display: block !important;
+        width: 100% !important;
+      }
+    }
+  </style>
+</head>
+
+<body style="background-color:#f5f5f7; margin:0; padding:0;">
+
+  <!-- Preheader (hidden) -->
+  <div style="display:none; font-size:1px; color:#f5f5f7; line-height:1px; max-height:0; max-width:0; opacity:0; overflow:hidden;">
+    Use this secure magic link to instantly log in to your EpicTwin workspace.
+  </div>
+
+  <!-- Full-width wrapper -->
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f5f5f7; padding:24px 0;">
+    <tr>
+      <td align="center">
+
+        <!-- Main container -->
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" class="container" style="max-width:600px; background-color:#f5f5f7;">
+          <!-- Logo row -->
+          <tr>
+            <td align="left" style="padding:0 24px 16px 24px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td valign="middle" style="padding-top:24px; padding-right:12px;">
+                    <!-- <img src="https://translix.co/logo_transparent.png"
+                         width="36"
+                         height="36"
+                         alt="epicTwin Logo"
+                         style="display:block; border:0; outline:none; text-decoration:none;"> -->
+                  </td>
+                  <td valign="middle" style="padding-top:24px; margin-top:24px;">
+                    <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; 
+                                 font-size:18px; 
+                                 font-weight:600; 
+                                 color:#1d1b3f;">
+                      epicTwin
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Card -->
+          <tr>
+            <td align="center" style="padding:0 24px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" class="main-card" style="background-color:#ffffff; border-radius:16px; box-shadow:0 10px 40px rgba(15,24,44,0.08);">
+                <tr>
+                  <td style="padding:32px 28px 8px 28px;">
+                    <h1 style="margin:0 0 12px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:24px; line-height:1.3; font-weight:700; color:#1d1b3f;">
+                      Log in with this magic link
+                    </h1>
+                    <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:1.6; color:#2f2b4f;">
+                      Hi {{user_name}},<br>
+                      Use the secure button below to instantly access your epicTwin workspace. This link will work once and expires in
+                      <strong>{{expires_in}}</strong>.
+                    </p>
+                  </td>
+                </tr>
+
+                <!-- Button row -->
+                <tr>
+                  <td align="center" style="padding:24px 28px;">
+                    <!--[if mso]>
+                    <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+                      href="{{magic_link}}" style="height:44px;v-text-anchor:middle;width:260px;" arcsize="50%"
+                      stroke="f" fillcolor="#a489f5">
+                      <w:anchorlock/>
+                      <center style="color:#150f33;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">
+                        Log in to epicTwin
+                      </center>
+                    </v:roundrect>
+                    <![endif]-->
+                    <!--[if !mso]><!-- -->
+                    <a href="{{magic_link}}"
+                      style="display:inline-block; padding:12px 32px; border-radius:999px; background-color:#E6D4FF; color:#150f33; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; font-weight:600; line-height:1.3; text-align:center;">
+                      Log in to epicTwin
+                    </a>
+                    <!--<![endif]-->
+                  </td>
+                </tr>
+
+                <!-- Info text -->
+                <tr>
+                  <td style="padding:0 28px 24px 28px;">
+                    <p style="margin:0 0 12px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:1.6; color:#4f4a6b;">
+                      If the button doesn’t work, copy and paste this link into your browser:
+                    </p>
+                    <p style="margin:0 0 20px 0; word-break:break-all; font-family:Menlo,Consolas,monospace; font-size:12px; line-height:1.5; color:#2a204f;">
+                      {{magic_link}}
+                    </p>
+                    <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; line-height:1.6; color:#777399;">
+                      Didn’t request this login? You can safely ignore this email. Your account is still secure.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding:16px 24px 0 24px;">
+              <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; line-height:1.6; color:#777399;">
+                epicTwin · AI-native localization for product teams
+              </p>
+              <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; line-height:1.6; color:#777399;">
+                Need help? <a href="mailto:{{support_email}}" style="color:#a489f5;">Contact support</a>
+              </p>
+              <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; line-height:1.6; color:#d1d5db;">
+                You're receiving this email because someone attempted to sign in using this address.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td height="24">&nbsp;</td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
