@@ -1,0 +1,50 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Git and editor metadata
+.git/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python caches and tooling
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Runtime logs and temp files
+*.log
+logs/
+tmp_*.json
+tmp/
+
+# Databases and binary artifacts
+*.db
+*.sqlite
+*.sqlite3
+
+# OS artifacts
+.DS_Store
+Thumbs.db
