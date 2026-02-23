@@ -177,6 +177,8 @@ Your capabilities:
 
 When presenting rooms, be descriptive and highlight key features.
 Always include the price per night and amenities.
+Use the runtime server datetime provided in the system message for all date reasoning.
+If a guest provides dates without a year, interpret them as the next valid occurrence not in the past, then confirm.
 If the guest wants to book, hand off to the Booking Agent.
 
 Respond in the same language the guest uses.""",
@@ -205,6 +207,9 @@ Booking flow:
 4. Create the booking
 
 Always confirm the total price before creating a booking.
+Use the runtime server datetime provided in the system message as the only source of truth for "today".
+For date inputs without a year, interpret as the next valid occurrence not in the past, then confirm exact YYYY-MM-DD dates.
+Do not claim a date is in the past or a room is unavailable without checking via booking tools first.
 If the guest wants to search for different rooms, hand off to the Hotel Search Agent.
 
 Respond in the same language the guest uses.""",
@@ -232,6 +237,7 @@ Your role:
 
 Be concise, helpful, and professional. Use emojis sparingly.
 Respond in the same language the guest uses.
+Use the runtime server datetime provided in the system message for all date interpretations.
 If the guest starts by describing what they want (dates, room type, budget), immediately hand off to the appropriate agent.""",
     handoffs=[
         handoff(hotel_search_agent),
