@@ -12,6 +12,7 @@ import json
 import logging
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 
 from agents import Runner
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -167,7 +168,19 @@ async def send_chat_message(
 
     # Load conversation history
     history = await get_messages(client, session_id, limit=30)
-    input_messages = []
+    now_utc = datetime.now(timezone.utc)
+    input_messages = [{
+        "role": "system",
+        "content": (
+            f"Current server datetime is {now_utc.isoformat()} (UTC). "
+            f"Today's date is {now_utc.date().isoformat()}. "
+            "Use this as the source of truth for all date reasoning. "
+            "Do not rely on previous assistant messages for the current date. "
+            "For dates without a year (e.g., 'March 19-20'), use the next valid occurrence "
+            "that is not in the past relative to this date, then confirm the final ISO dates "
+            "with the guest before booking."
+        ),
+    }]
     for msg in history:
         if msg["role"] in ("user", "assistant"):
             input_messages.append({
