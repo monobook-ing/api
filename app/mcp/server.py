@@ -36,13 +36,11 @@ def _origin(url: str | None) -> str | None:
 
 
 def _security_schemes() -> list[dict[str, str]]:
-    return [
-        {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-Monobook-MCP-Key",
-        }
-    ]
+    if settings.mcp_shared_secret:
+        # ChatGPT Apps currently validates only `noauth` / `oauth` tagged schemes.
+        # Keep MCP transport enforcement at the header middleware level when secret is set.
+        return [{"type": "noauth"}]
+    return [{"type": "noauth"}]
 
 
 def _tool_meta(output_template: str, invoking: str, invoked: str) -> dict[str, Any]:
