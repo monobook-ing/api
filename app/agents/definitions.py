@@ -258,9 +258,6 @@ def build_agents(
         session_id=session_id,
     )
 
-    run_config = RunConfig(
-        model=model,
-        max_turns=15,
-    )
+    run_config = RunConfig(model=model)
 
     return triage_agent, context, run_config

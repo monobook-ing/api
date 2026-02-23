@@ -187,6 +187,7 @@ async def send_chat_message(
                 agent,
                 input=input_messages,
                 context=context,
+                max_turns=15,
                 run_config=run_config,
             )
 
