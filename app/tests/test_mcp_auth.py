@@ -31,3 +31,11 @@ def test_mcp_auth_allows_matching_header():
     assert response.status_code == 200
     assert response.json() == {"ok": True}
 
+
+def test_mcp_auth_allows_requests_when_secret_disabled():
+    client = _client_with_secret("")
+
+    response = client.get("/ping")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}

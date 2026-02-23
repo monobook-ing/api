@@ -20,12 +20,17 @@ class MCPHeaderAuthApp:
             await self.app(scope, receive, send)
             return
 
+        # If no shared secret is configured, MCP runs in "No Auth" mode.
+        if not self.shared_secret:
+            await self.app(scope, receive, send)
+            return
+
         headers = {
             key.decode("latin-1").lower(): value.decode("latin-1")
             for key, value in scope.get("headers", [])
         }
         provided = headers.get(MCP_AUTH_HEADER, "")
-        authorized = bool(self.shared_secret) and secrets.compare_digest(provided, self.shared_secret)
+        authorized = secrets.compare_digest(provided, self.shared_secret)
 
         if not authorized:
             response = JSONResponse(
@@ -36,4 +41,3 @@ class MCPHeaderAuthApp:
             return
 
         await self.app(scope, receive, send)
-
