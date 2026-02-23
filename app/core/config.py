@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     agent_model: str = "gpt-4o-mini"
 
+    # MCP / ChatGPT Apps integration
+    mcp_shared_secret: str | None = Field(None, env="MCP_SHARED_SECRET")
+    mcp_public_base_url: str | None = Field(None, env="MCP_PUBLIC_BASE_URL")
+    chatgpt_widget_base_url: str | None = Field(None, env="CHATGPT_WIDGET_BASE_URL")
+
     @model_validator(mode="after")
     def validate_supabase(self):
         if not self.supabase_url or not self.supabase_service_key:

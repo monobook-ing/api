@@ -526,6 +526,30 @@ Idempotent: re-running deletes previous seed data for the user first.
 
 ---
 
+## ChatGPT Apps / MCP
+
+Remote MCP endpoint (Streamable HTTP):
+
+- `POST /mcp`
+
+Required header:
+
+- `X-Monobook-MCP-Key: <MCP_SHARED_SECRET>`
+
+Exposed tools:
+
+- `search_rooms(property_id, query, check_in?, check_out?, guests?)`
+- `check_availability(property_id, room_id, check_in, check_out)`
+- `create_booking(property_id, room_id, guest_name, guest_email?, check_in, check_out, guests?)`
+
+Notes:
+
+- `property_id` must be a valid UUID.
+- MCP-originated audit entries are stored with `source = "chatgpt"`.
+- MCP booking creation writes bookings with `status = "confirmed"` and `source = "chatgpt"`.
+
+---
+
 ## Error Responses
 
 All errors follow this shape:

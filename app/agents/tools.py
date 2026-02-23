@@ -28,6 +28,7 @@ async def log_tool_call(
     tool_name: str,
     description: str,
     status: str,
+    source: str = "widget",
     request_payload: dict | None = None,
     response_payload: dict | None = None,
 ) -> None:
@@ -37,7 +38,7 @@ async def log_tool_call(
             {
                 "property_id": property_id,
                 "conversation_id": session_id,
-                "source": "widget",
+                "source": source,
                 "tool_name": tool_name,
                 "description": description,
                 "status": status,
@@ -61,6 +62,7 @@ async def search_rooms(
     check_out: str | None = None,
     guests: int | None = None,
     session_id: str | None = None,
+    source: str = "widget",
 ) -> dict[str, Any]:
     """Search for rooms using semantic search + availability filtering."""
     # Semantic search
@@ -119,14 +121,17 @@ async def search_rooms(
     await log_tool_call(
         client, property_id, session_id, "search_rooms",
         f"Searched rooms: '{query}'", "success",
+        source,
         {"query": query, "check_in": check_in, "check_out": check_out, "guests": guests},
         {"count": len(rooms)},
     )
 
     return {
+        "property_id": property_id,
         "rooms": [
             {
                 "id": r["id"],
+                "property_id": r["property_id"],
                 "name": r["name"],
                 "type": r["type"],
                 "description": r.get("description", ""),
@@ -145,6 +150,7 @@ async def get_property_info(
     client: Client,
     property_id: str,
     session_id: str | None = None,
+    source: str = "widget",
 ) -> dict[str, Any]:
     """Get full property information."""
     prop = await get_property_by_id(client, property_id)
@@ -163,6 +169,7 @@ async def get_property_info(
     await log_tool_call(
         client, property_id, session_id, "get_property_info",
         "Retrieved property information", "success",
+        source,
     )
 
     result = {
@@ -187,6 +194,7 @@ async def get_room_details(
     property_id: str,
     room_id: str,
     session_id: str | None = None,
+    source: str = "widget",
 ) -> dict[str, Any]:
     """Get detailed room information including pricing tiers."""
     room = (
@@ -214,6 +222,7 @@ async def get_room_details(
     await log_tool_call(
         client, property_id, session_id, "get_room_details",
         f"Retrieved details for room {r['name']}", "success",
+        source,
     )
 
     return {
@@ -243,6 +252,7 @@ async def search_knowledge_base(
     api_key: str,
     query: str,
     session_id: str | None = None,
+    source: str = "widget",
 ) -> dict[str, Any]:
     """Semantic search over knowledge file chunks (hotel policies, FAQ, etc.)."""
     results = await search_similar(
@@ -255,6 +265,7 @@ async def search_knowledge_base(
     await log_tool_call(
         client, property_id, session_id, "search_knowledge_base",
         f"Searched knowledge base: '{query}'", "success",
+        source,
         {"query": query},
         {"count": len(knowledge_results)},
     )
@@ -282,6 +293,7 @@ async def check_availability(
     check_in: str,
     check_out: str,
     session_id: str | None = None,
+    source: str = "widget",
 ) -> dict[str, Any]:
     """Check if a room is available for the given dates."""
     error = validate_dates(check_in, check_out)
@@ -304,6 +316,7 @@ async def check_availability(
         client, property_id, session_id, "check_availability",
         f"Checked availability for room {room_id}: {'available' if available else 'unavailable'}",
         "success",
+        source,
         {"room_id": room_id, "check_in": check_in, "check_out": check_out},
         {"available": available},
     )
@@ -325,6 +338,7 @@ async def calculate_price(
     check_out: str,
     guests: int = 2,
     session_id: str | None = None,
+    source: str = "widget",
 ) -> dict[str, Any]:
     """Calculate total price for a room booking, considering date overrides and guest tiers."""
     error = validate_dates(check_in, check_out)
@@ -403,6 +417,7 @@ async def calculate_price(
         client, property_id, session_id, "calculate_price",
         f"Calculated price for {room.data['name']}: ${total + taxes + service_fee:.2f}",
         "success",
+        source,
     )
 
     return {
@@ -428,6 +443,8 @@ async def tool_create_booking(
     check_out: str,
     guests: int = 2,
     session_id: str | None = None,
+    source: str = "widget",
+    booking_status: str = "ai_pending",
 ) -> dict[str, Any]:
     """Create a booking for a guest."""
     # Validate
@@ -439,12 +456,29 @@ async def tool_create_booking(
         return {"error": guest_error}
 
     # Check availability first
-    avail = await check_availability(client, property_id, room_id, check_in, check_out)
+    avail = await check_availability(
+        client,
+        property_id,
+        room_id,
+        check_in,
+        check_out,
+        session_id=session_id,
+        source=source,
+    )
     if not avail.get("available"):
         return {"error": "Room is not available for the selected dates."}
 
     # Calculate price
-    pricing = await calculate_price(client, property_id, room_id, check_in, check_out, guests)
+    pricing = await calculate_price(
+        client,
+        property_id,
+        room_id,
+        check_in,
+        check_out,
+        guests,
+        session_id=session_id,
+        source=source,
+    )
     if "error" in pricing:
         return pricing
 
@@ -459,9 +493,9 @@ async def tool_create_booking(
         "check_in": check_in,
         "check_out": check_out,
         "total_price": pricing["total"],
-        "status": "ai_pending",
+        "status": booking_status,
         "ai_handled": True,
-        "source": "widget",
+        "source": source,
         "conversation_id": session_id,
     }
 
@@ -470,13 +504,14 @@ async def tool_create_booking(
     await log_tool_call(
         client, property_id, session_id, "create_booking",
         f"Created booking for {guest_name}", "success",
+        source,
         {"room_id": room_id, "check_in": check_in, "check_out": check_out},
         {"booking_id": booking["id"], "total": pricing["total"]},
     )
 
     return {
         "booking_id": booking["id"],
-        "status": "ai_pending",
+        "status": booking_status,
         "guest_name": guest_name,
         "room_id": room_id,
         "check_in": check_in,
@@ -493,6 +528,7 @@ async def tool_get_booking_status(
     property_id: str,
     booking_id: str,
     session_id: str | None = None,
+    source: str = "widget",
 ) -> dict[str, Any]:
     """Get the status of an existing booking."""
     booking = await get_booking_by_id(client, booking_id)
@@ -504,6 +540,7 @@ async def tool_get_booking_status(
     await log_tool_call(
         client, property_id, session_id, "get_booking_status",
         f"Retrieved booking status: {booking['status']}", "success",
+        source,
     )
 
     return {
