@@ -20,6 +20,7 @@ from supabase import Client
 
 from app.agents.definitions import build_agents
 from app.agents.guardrails import sanitize_input
+from app.api.deps import validate_property_id
 from app.core.config import get_settings
 from app.crud.ai_connection import get_decrypted_api_key
 from app.crud.chat import create_message, create_session, get_messages, get_session
@@ -71,7 +72,8 @@ async def _get_api_key(client: Client, property_id: str) -> str:
 
 
 def _verify_property_exists(client: Client, property_id: str) -> None:
-    """Verify that the property exists."""
+    """Verify that the property_id is a valid UUID and the property exists."""
+    validate_property_id(property_id)
     result = client.table("properties").select("id").eq("id", property_id).execute()
     if not result.data:
         raise HTTPException(
@@ -109,6 +111,7 @@ async def list_chat_messages(
     client: Client = Depends(get_supabase),
 ):
     """Get message history for a chat session."""
+    validate_property_id(property_id)
     session = await get_session(client, session_id)
     if not session or session["property_id"] != property_id:
         raise HTTPException(
@@ -130,6 +133,9 @@ async def send_chat_message(
     client: Client = Depends(get_supabase),
 ):
     """Send a message and get AI response via SSE stream."""
+    # Validate property_id format
+    validate_property_id(property_id)
+
     # Rate limit
     client_ip = request.client.host if request.client else "unknown"
     if not _check_rate_limit(client_ip):

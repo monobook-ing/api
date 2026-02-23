@@ -3,6 +3,7 @@ from openai import OpenAI
 from supabase import Client
 
 from app.api import deps
+from app.api.deps import validate_property_id
 from app.crud.ai_connection import get_ai_connections, get_decrypted_api_key, upsert_ai_connection
 from app.crud.property import user_owns_property
 from app.db.base import get_supabase
@@ -19,6 +20,7 @@ router = APIRouter(
 
 
 async def _check_access(client: Client, user_id: str, property_id: str):
+    validate_property_id(property_id)
     if not await user_owns_property(client, user_id, property_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
