@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
 from app.api import deps
+from app.api.deps import validate_property_id
 from app.core.config import get_settings
 from app.crud.ai_connection import get_decrypted_api_key
 from app.crud.property import user_owns_property
@@ -42,6 +43,7 @@ async def generate_embeddings(
     client: Client = Depends(get_supabase),
 ):
     """Generate embeddings for a property and all its active rooms."""
+    validate_property_id(property_id)
     if not await user_owns_property(client, current_user["id"], property_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
@@ -65,6 +67,7 @@ async def search_embeddings(
     client: Client = Depends(get_supabase),
 ):
     """Semantic search across property embeddings."""
+    validate_property_id(property_id)
     if not await user_owns_property(client, current_user["id"], property_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
@@ -86,6 +89,7 @@ async def embedding_status(
     client: Client = Depends(get_supabase),
 ):
     """Get embedding statistics for a property."""
+    validate_property_id(property_id)
     if not await user_owns_property(client, current_user["id"], property_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
