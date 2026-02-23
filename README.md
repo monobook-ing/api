@@ -54,3 +54,10 @@ This starter does not bundle a migrations tool; initialize your database schema 
 - `POST /auth/register` — create user
 - `POST /auth/token` — obtain JWT access token
 - `GET /protected/me` — current user profile (requires Bearer token)
+- `POST /mcp` — ChatGPT Apps MCP endpoint (requires `X-Monobook-MCP-Key`)
+
+### MCP Integration Environment Variables
+
+- `MCP_SHARED_SECRET` (required for MCP access): shared key expected in `X-Monobook-MCP-Key`
+- `MCP_PUBLIC_BASE_URL` (optional): public API base URL used for widget CSP metadata
+- `CHATGPT_WIDGET_BASE_URL` (optional): public base URL serving widget assets (`/apps/chatgpt-widget.js` and `/apps/chatgpt-widget.css`)

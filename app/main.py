@@ -20,6 +20,7 @@ from app.api.routes import (
     chat,
 )
 from app.core.config import get_settings
+from app.mcp.server import get_mcp_asgi_app, shutdown_mcp, startup_mcp
 
 settings = get_settings()
 
@@ -61,6 +62,19 @@ app.include_router(seed.router)
 app.include_router(ai_connections.router)
 app.include_router(embeddings.router)
 app.include_router(chat.router)
+
+# ChatGPT Apps remote MCP endpoint (protected by shared-secret header)
+app.mount("/mcp", get_mcp_asgi_app())
+
+
+@app.on_event("startup")
+async def _startup_mcp() -> None:
+    await startup_mcp()
+
+
+@app.on_event("shutdown")
+async def _shutdown_mcp() -> None:
+    await shutdown_mcp()
 
 
 @app.get("/", tags=["public"])
