@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     google_client_id: str | None = Field(None, env="GOOGLE_CLIENT_ID")
     google_client_secret: str | None = Field(None, env="GOOGLE_CLIENT_SECRET")
 
+    # AI / Embedding (Layer 2 & 3)
+    openai_api_key: str | None = Field(None, env="OPENAI_API_KEY")
+    encryption_key: str | None = Field(None, env="ENCRYPTION_KEY")
+    embedding_model: str = "text-embedding-3-small"
+    agent_model: str = "gpt-4o-mini"
+
     @model_validator(mode="after")
     def validate_supabase(self):
         if not self.supabase_url or not self.supabase_service_key:

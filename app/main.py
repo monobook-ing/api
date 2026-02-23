@@ -15,6 +15,9 @@ from app.api.routes import (
     knowledge_files,
     settings_connections,
     seed,
+    ai_connections,
+    embeddings,
+    chat,
 )
 from app.core.config import get_settings
 
@@ -53,6 +56,11 @@ app.include_router(host_profile.router)
 app.include_router(knowledge_files.router)
 app.include_router(settings_connections.router)
 app.include_router(seed.router)
+
+# Include routers — AI / Layer 2 & 3
+app.include_router(ai_connections.router)
+app.include_router(embeddings.router)
+app.include_router(chat.router)
 
 
 @app.get("/", tags=["public"])
