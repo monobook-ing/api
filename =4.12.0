@@ -1,0 +1,3 @@
+Requirement already satisfied: beautifulsoup4 in /opt/homebrew/Caskroom/miniconda/base/lib/python3.12/site-packages (4.13.3)
+Requirement already satisfied: soupsieve>1.2 in /opt/homebrew/Caskroom/miniconda/base/lib/python3.12/site-packages (from beautifulsoup4) (2.6)
+Requirement already satisfied: typing-extensions>=4.0.0 in /opt/homebrew/Caskroom/miniconda/base/lib/python3.12/site-packages (from beautifulsoup4) (4.15.0)
