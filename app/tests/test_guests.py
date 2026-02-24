@@ -73,7 +73,7 @@ def _sample_guest_detail() -> dict:
     }
 
 
-def test_list_guests_success_forwards_search(monkeypatch):
+def test_list_guests_success_forwards_search_and_filters(monkeypatch):
     guest_test_app.dependency_overrides[deps.get_current_user] = _override_current_user
     guest_test_app.dependency_overrides[get_supabase] = lambda: object()
 
@@ -100,11 +100,67 @@ def test_list_guests_success_forwards_search(monkeypatch):
 
     try:
         with TestClient(guest_test_app) as client:
-            response = client.get("/v1.0/properties/prop-1/guests", params={"search": "sarah"})
+            response = client.get(
+                "/v1.0/properties/prop-1/guests",
+                params={
+                    "search": "sarah",
+                    "room_id": "room-1",
+                    "status": "confirmed",
+                },
+            )
 
         assert response.status_code == 200
         assert response.json()["items"][0]["id"] == "guest-1"
         assert list_mock.await_args.kwargs["search"] == "sarah"
+        assert list_mock.await_args.kwargs["room_id"] == "room-1"
+        assert list_mock.await_args.kwargs["status"] == "confirmed"
+    finally:
+        guest_test_app.dependency_overrides = {}
+
+
+def test_list_guests_success_forwards_combined_filters(monkeypatch):
+    guest_test_app.dependency_overrides[deps.get_current_user] = _override_current_user
+    guest_test_app.dependency_overrides[get_supabase] = lambda: object()
+
+    monkeypatch.setattr(guest_routes, "user_owns_property", AsyncMock(return_value=True))
+    list_mock = AsyncMock(
+        return_value=[
+            {
+                "id": "guest-1",
+                "property_id": "prop-1",
+                "name": "Sarah Chen",
+                "email": "sarah@example.com",
+                "phone": "+1 415-555-0142",
+                "notes": "",
+                "total_stays": 1,
+                "last_stay_date": "2026-02-20",
+                "total_spent": 578.0,
+                "latest_booking": None,
+                "created_at": "2026-02-01T10:00:00+00:00",
+                "updated_at": "2026-02-01T10:00:00+00:00",
+            }
+        ]
+    )
+    monkeypatch.setattr(guest_routes, "get_guests_by_property", list_mock)
+
+    try:
+        with TestClient(guest_test_app) as client:
+            response = client.get(
+                "/v1.0/properties/prop-1/guests",
+                params={
+                    "search": "vip",
+                    "room_id": "room-2",
+                    "status": "ai_pending",
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["items"][0]["id"] == "guest-1"
+        assert list_mock.await_args.kwargs == {
+            "search": "vip",
+            "room_id": "room-2",
+            "status": "ai_pending",
+        }
     finally:
         guest_test_app.dependency_overrides = {}
 
