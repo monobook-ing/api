@@ -15,6 +15,7 @@ from supabase import Client
 
 from app.agents.guardrails import validate_dates, validate_guests
 from app.crud.booking import create_booking, get_booking_by_id, get_or_create_guest
+from app.crud.chat import link_session_to_guest
 from app.crud.property import get_property_by_id
 from app.services.embedding import search_similar
 
@@ -484,6 +485,8 @@ async def tool_create_booking(
 
     # Get or create guest
     guest_id = await get_or_create_guest(client, property_id, guest_name, guest_email)
+    if session_id:
+        await link_session_to_guest(client, property_id, session_id, guest_id)
 
     # Create booking
     booking_data = {

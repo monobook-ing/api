@@ -182,7 +182,9 @@ CREATE TABLE guests (
   name TEXT NOT NULL,
   email TEXT,
   phone TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Bookings
@@ -293,6 +295,7 @@ CREATE TABLE ai_connections (
 CREATE TABLE chat_sessions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  guest_id UUID REFERENCES guests(id) ON DELETE SET NULL,
   guest_name TEXT,
   guest_email TEXT,
   source audit_source_type NOT NULL DEFAULT 'widget',
@@ -370,6 +373,8 @@ CREATE INDEX idx_audit_log_property ON audit_log(property_id);
 CREATE INDEX idx_audit_log_created ON audit_log(created_at DESC);
 CREATE INDEX idx_audit_log_source ON audit_log(source);
 CREATE INDEX idx_guests_property ON guests(property_id);
+CREATE INDEX idx_guests_property_email_ci ON guests(property_id, lower(email));
+CREATE INDEX idx_guests_property_name_ci ON guests(property_id, lower(name));
 CREATE INDEX idx_knowledge_files_property ON knowledge_files(property_id);
 CREATE INDEX idx_dashboard_metrics_property_date ON dashboard_metrics(property_id, date);
 CREATE INDEX idx_properties_account ON properties(account_id);
@@ -377,6 +382,7 @@ CREATE INDEX idx_properties_account ON properties(account_id);
 -- AI / Vector / Chat indexes
 CREATE INDEX idx_ai_connections_property ON ai_connections(property_id);
 CREATE INDEX idx_chat_sessions_property ON chat_sessions(property_id);
+CREATE INDEX idx_chat_sessions_guest ON chat_sessions(guest_id);
 CREATE INDEX idx_chat_messages_session ON chat_messages(session_id);
 CREATE INDEX idx_chat_messages_created ON chat_messages(created_at);
 CREATE INDEX idx_embeddings_property ON embeddings(property_id);
