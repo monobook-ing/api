@@ -16,6 +16,7 @@ class GuestLatestBookingResponse(BaseModel):
     status: str
     total_price: float
     ai_handled: bool
+    source: str | None = None
 
 
 class GuestSummaryResponse(BaseModel):
@@ -44,6 +45,7 @@ class GuestBookingResponse(BaseModel):
     status: str
     total_price: float
     ai_handled: bool
+    source: str | None = None
     conversation_id: str | None = None
 
 

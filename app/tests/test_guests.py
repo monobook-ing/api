@@ -39,6 +39,7 @@ def _sample_guest_detail() -> dict:
             "status": "confirmed",
             "total_price": 578.0,
             "ai_handled": True,
+            "source": "chatgpt",
         },
         "created_at": "2026-02-01T10:00:00+00:00",
         "updated_at": "2026-02-21T10:00:00+00:00",
@@ -54,6 +55,7 @@ def _sample_guest_detail() -> dict:
                 "status": "confirmed",
                 "total_price": 578.0,
                 "ai_handled": True,
+                "source": "chatgpt",
                 "conversation_id": "session-1",
             }
         ],
@@ -276,9 +278,11 @@ def test_map_latest_booking_sets_room_image_none_when_no_images():
         "status": "confirmed",
         "total_price": 578.0,
         "ai_handled": True,
+        "source": "gemini",
         "rooms": {"name": "Ocean View Deluxe Suite", "images": []},
     }
 
     mapped = _map_latest_booking(booking)
     assert mapped is not None
     assert mapped["room_image"] is None
+    assert mapped["source"] == "gemini"

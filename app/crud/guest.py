@@ -58,6 +58,7 @@ def _map_latest_booking(booking: dict | None) -> dict | None:
         "status": booking["status"],
         "total_price": _as_float(booking.get("total_price")),
         "ai_handled": bool(booking.get("ai_handled", False)),
+        "source": booking.get("source"),
     }
 
 
@@ -99,6 +100,7 @@ def _map_booking(booking: dict) -> dict:
         "status": booking["status"],
         "total_price": _as_float(booking.get("total_price")),
         "ai_handled": bool(booking.get("ai_handled", False)),
+        "source": booking.get("source"),
         "conversation_id": booking.get("conversation_id"),
     }
 
@@ -178,7 +180,7 @@ async def get_guests_by_property(
     booking_rows = (
         client.table("bookings")
         .select(
-            "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, ai_handled, "
+            "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, ai_handled, source, "
             "conversation_id, rooms(name,images)"
         )
         .eq("property_id", property_id)
@@ -209,7 +211,7 @@ async def get_guest_detail(client: Client, property_id: str, guest_id: str) -> d
     booking_rows = (
         client.table("bookings")
         .select(
-            "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, ai_handled, "
+            "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, ai_handled, source, "
             "conversation_id, rooms(name,images)"
         )
         .eq("property_id", property_id)
