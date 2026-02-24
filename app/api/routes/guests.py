@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
@@ -26,11 +28,22 @@ async def _check_access(client: Client, user_id: str, property_id: str) -> None:
 async def list_guests(
     property_id: str,
     search: str | None = Query(None, min_length=1, max_length=200),
+    room_id: str | None = Query(None, min_length=1, max_length=200),
+    status_filter: Literal["confirmed", "ai_pending"] | None = Query(
+        None,
+        alias="status",
+    ),
     current_user: dict = Depends(deps.get_current_user),
     client: Client = Depends(get_supabase),
 ):
     await _check_access(client, current_user["id"], property_id)
-    guests = await get_guests_by_property(client, property_id, search=search)
+    guests = await get_guests_by_property(
+        client,
+        property_id,
+        search=search,
+        room_id=room_id,
+        status=status_filter,
+    )
     return GuestListResponse(items=guests)
 
 

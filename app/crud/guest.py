@@ -111,9 +111,37 @@ async def get_guest_by_id(client: Client, property_id: str, guest_id: str) -> di
 
 
 async def get_guests_by_property(
-    client: Client, property_id: str, search: str | None = None
+    client: Client,
+    property_id: str,
+    search: str | None = None,
+    room_id: str | None = None,
+    status: str | None = None,
 ) -> list[dict]:
     query = client.table("guests").select("*").eq("property_id", property_id)
+
+    if room_id or status:
+        filtered_booking_query = (
+            client.table("bookings")
+            .select("guest_id")
+            .eq("property_id", property_id)
+        )
+        if room_id:
+            filtered_booking_query = filtered_booking_query.eq("room_id", room_id)
+        if status:
+            filtered_booking_query = filtered_booking_query.eq("status", status)
+
+        filtered_bookings = filtered_booking_query.execute().data or []
+        filtered_guest_ids = list(
+            {
+                booking.get("guest_id")
+                for booking in filtered_bookings
+                if isinstance(booking.get("guest_id"), str)
+            }
+        )
+        if not filtered_guest_ids:
+            return []
+        query = query.in_("id", filtered_guest_ids)
+
     if search and search.strip():
         query = query.or_(_build_guest_search_filter(search.strip()))
 
