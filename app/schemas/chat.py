@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class ChatSessionCreate(BaseModel):
+    guest_id: str | None = None
     guest_name: str | None = None
     guest_email: str | None = None
     source: str = "widget"
@@ -14,6 +15,7 @@ class ChatSessionCreate(BaseModel):
 class ChatSessionResponse(BaseModel):
     id: str
     property_id: str
+    guest_id: str | None = None
     guest_name: str | None = None
     guest_email: str | None = None
     source: str

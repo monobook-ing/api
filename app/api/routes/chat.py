@@ -24,7 +24,13 @@ from app.agents.guardrails import sanitize_input
 from app.api.deps import validate_property_id
 from app.core.config import get_settings
 from app.crud.ai_connection import get_decrypted_api_key
-from app.crud.chat import create_message, create_session, get_messages, get_session
+from app.crud.chat import (
+    create_message,
+    create_session,
+    get_messages,
+    get_session,
+    resolve_guest_id,
+)
 from app.db.base import get_supabase
 from app.schemas.chat import (
     ChatMessageCreate,
@@ -92,10 +98,23 @@ async def start_chat_session(
     """Create a new chat session for a guest."""
     _verify_property_exists(client, property_id)
 
+    resolved_guest_id = await resolve_guest_id(
+        client,
+        property_id,
+        guest_id=payload.guest_id,
+        guest_name=payload.guest_name,
+        guest_email=payload.guest_email,
+    )
+    if payload.guest_id and not resolved_guest_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Guest not found"
+        )
+
     session = await create_session(
         client,
         property_id,
         payload.source,
+        resolved_guest_id,
         payload.guest_name,
         payload.guest_email,
     )

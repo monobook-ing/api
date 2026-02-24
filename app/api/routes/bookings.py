@@ -9,6 +9,7 @@ from app.crud.booking import (
     get_or_create_guest,
     update_booking,
 )
+from app.crud.chat import link_session_to_guest
 from app.crud.property import user_owns_property
 from app.db.base import get_supabase
 from app.schemas.booking import (
@@ -66,6 +67,8 @@ async def create_new_booking(
         "conversation_id": payload.conversation_id,
     }
     booking = await create_booking(client, data)
+    if payload.conversation_id:
+        await link_session_to_guest(client, property_id, payload.conversation_id, guest_id)
     booking["guest_name"] = payload.guest_name
     return booking
 

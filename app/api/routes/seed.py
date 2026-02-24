@@ -4,7 +4,7 @@ POST /v1.0/seed
 - Creates 3 properties (accounts + property records) for the current user
 - Creates host profiles for each property
 - Creates rooms with pricing (date overrides + guest tiers)
-- Creates guests and bookings
+- Creates guests, chat sessions/messages, and bookings
 - Creates audit log entries
 - Creates knowledge base files
 - Creates dashboard metrics (12 months)
@@ -244,34 +244,191 @@ async def seed_data(
 
     # ── 5. Guests ────────────────────────────────────────────────────────
     guests_data = [
-        {"property_id": pid1, "name": "Sarah Chen", "email": "sarah.chen@example.com"},
-        {"property_id": pid1, "name": "James Wilson", "email": "james.wilson@example.com"},
-        {"property_id": pid1, "name": "Maria Garcia", "email": "maria.garcia@example.com"},
-        {"property_id": pid1, "name": "Alex Thompson", "email": "alex.thompson@example.com"},
-        {"property_id": pid1, "name": "Yuki Tanaka", "email": "yuki.tanaka@example.com"},
-        {"property_id": pid1, "name": "Alex Kim", "email": "alex.kim@example.com"},
-        {"property_id": pid1, "name": "Emma Laurent", "email": "emma.laurent@example.com"},
-        {"property_id": pid1, "name": "David Park", "email": "david.park@example.com"},
+        {
+            "property_id": pid1,
+            "name": "Sarah Chen",
+            "email": "sarah.chen@example.com",
+            "phone": "+1 415-555-0142",
+            "notes": "Prefers high floor and feather-free pillows",
+        },
+        {
+            "property_id": pid1,
+            "name": "James Wilson",
+            "email": "james.wilson@example.com",
+            "phone": "+1 646-555-0148",
+            "notes": "",
+        },
+        {
+            "property_id": pid1,
+            "name": "Maria Garcia",
+            "email": "maria.garcia@example.com",
+            "phone": "+34 91 555 0132",
+            "notes": "Early check-in preferred when available",
+        },
+        {
+            "property_id": pid1,
+            "name": "Alex Thompson",
+            "email": "alex.thompson@example.com",
+            "phone": "+1 303-555-0110",
+            "notes": "",
+        },
+        {
+            "property_id": pid1,
+            "name": "Yuki Tanaka",
+            "email": "yuki.tanaka@example.com",
+            "phone": "+81 3-5555-0191",
+            "notes": "Vegetarian breakfast",
+        },
+        {
+            "property_id": pid1,
+            "name": "Alex Kim",
+            "email": "alex.kim@example.com",
+            "phone": "+1 917-555-0193",
+            "notes": "",
+        },
+        {
+            "property_id": pid1,
+            "name": "Emma Laurent",
+            "email": "emma.laurent@example.com",
+            "phone": "+33 1 55 55 01 74",
+            "notes": "",
+        },
+        {
+            "property_id": pid1,
+            "name": "David Park",
+            "email": "david.park@example.com",
+            "phone": "+1 213-555-0175",
+            "notes": "",
+        },
     ]
     guests_resp = client.table("guests").insert(guests_data).execute()
     guest_map = {g["name"]: g["id"] for g in guests_resp.data}
 
-    # ── 6. Bookings ──────────────────────────────────────────────────────
+    # ── 6. Guest chat sessions + messages ───────────────────────────────
+    sessions_data = [
+        {
+            "property_id": pid1,
+            "guest_id": guest_map["Sarah Chen"],
+            "guest_name": "Sarah Chen",
+            "guest_email": "sarah.chen@example.com",
+            "source": "widget",
+            "created_at": "2026-02-17T09:30:00Z",
+            "updated_at": "2026-02-17T09:31:20Z",
+        },
+        {
+            "property_id": pid1,
+            "guest_id": guest_map["James Wilson"],
+            "guest_name": "James Wilson",
+            "guest_email": "james.wilson@example.com",
+            "source": "chatgpt",
+            "created_at": "2026-02-15T11:00:00Z",
+            "updated_at": "2026-02-15T11:01:00Z",
+        },
+        {
+            "property_id": pid1,
+            "guest_id": guest_map["Maria Garcia"],
+            "guest_name": "Maria Garcia",
+            "guest_email": "maria.garcia@example.com",
+            "source": "claude",
+            "created_at": "2026-02-19T16:00:00Z",
+            "updated_at": "2026-02-19T16:01:25Z",
+        },
+        {
+            "property_id": pid1,
+            "guest_id": guest_map["Yuki Tanaka"],
+            "guest_name": "Yuki Tanaka",
+            "guest_email": "yuki.tanaka@example.com",
+            "source": "widget",
+            "created_at": "2026-02-21T08:00:00Z",
+            "updated_at": "2026-02-21T08:01:10Z",
+        },
+    ]
+    sessions_resp = client.table("chat_sessions").insert(sessions_data).execute()
+    session_map = {session["guest_name"]: session["id"] for session in sessions_resp.data}
+
+    messages_data = [
+        {
+            "session_id": session_map["Sarah Chen"],
+            "role": "user",
+            "content": "Hi, I'd like to book the Ocean View Suite for Feb 18-20",
+            "created_at": "2026-02-17T09:30:00Z",
+        },
+        {
+            "session_id": session_map["Sarah Chen"],
+            "role": "assistant",
+            "content": "The Ocean View Deluxe Suite is available for those dates at $289/night. Shall I proceed?",
+            "created_at": "2026-02-17T09:30:15Z",
+        },
+        {
+            "session_id": session_map["Sarah Chen"],
+            "role": "user",
+            "content": "Yes please, and could I get a high floor?",
+            "created_at": "2026-02-17T09:31:00Z",
+        },
+        {
+            "session_id": session_map["Sarah Chen"],
+            "role": "assistant",
+            "content": "Absolutely. I've added your high-floor request and confirmed your booking.",
+            "created_at": "2026-02-17T09:31:20Z",
+        },
+        {
+            "session_id": session_map["James Wilson"],
+            "role": "user",
+            "content": "Do you have anything available for tomorrow night?",
+            "created_at": "2026-02-15T11:00:00Z",
+        },
+        {
+            "session_id": session_map["James Wilson"],
+            "role": "assistant",
+            "content": "Yes, a Standard Room is available at $170/night for Feb 16-18.",
+            "created_at": "2026-02-15T11:00:12Z",
+        },
+        {
+            "session_id": session_map["Maria Garcia"],
+            "role": "user",
+            "content": "I need the Penthouse for Feb 20-22.",
+            "created_at": "2026-02-19T16:00:00Z",
+        },
+        {
+            "session_id": session_map["Maria Garcia"],
+            "role": "assistant",
+            "content": "Penthouse Suite is available for those dates at $490/night.",
+            "created_at": "2026-02-19T16:00:18Z",
+        },
+        {
+            "session_id": session_map["Yuki Tanaka"],
+            "role": "user",
+            "content": "Bonjour! I'd like to confirm my upcoming stay.",
+            "created_at": "2026-02-21T08:00:00Z",
+        },
+        {
+            "session_id": session_map["Yuki Tanaka"],
+            "role": "assistant",
+            "content": "Everything is confirmed. We look forward to hosting you.",
+            "created_at": "2026-02-21T08:01:10Z",
+        },
+    ]
+    client.table("chat_messages").insert(messages_data).execute()
+
+    # ── 7. Bookings ──────────────────────────────────────────────────────
     bookings_data = [
         {
             "property_id": pid1, "room_id": rid1, "guest_id": guest_map["Sarah Chen"],
             "check_in": "2026-03-15", "check_out": "2026-03-20", "total_price": 2100,
             "status": "confirmed", "ai_handled": True, "source": "mcp",
+            "conversation_id": session_map["Sarah Chen"],
         },
         {
             "property_id": pid1, "room_id": rid2, "guest_id": guest_map["James Wilson"],
             "check_in": "2026-03-22", "check_out": "2026-03-25", "total_price": 1260,
             "status": "confirmed", "ai_handled": True, "source": "chatgpt",
+            "conversation_id": session_map["James Wilson"],
         },
         {
             "property_id": pid1, "room_id": rid1, "guest_id": guest_map["Maria Garcia"],
             "check_in": "2026-03-18", "check_out": "2026-03-21", "total_price": 1260,
             "status": "ai_pending", "ai_handled": True, "source": "claude",
+            "conversation_id": session_map["Maria Garcia"],
         },
         {
             "property_id": pid1, "room_id": rid2, "guest_id": guest_map["Alex Thompson"],
@@ -282,6 +439,7 @@ async def seed_data(
             "property_id": pid1, "room_id": rid1, "guest_id": guest_map["Yuki Tanaka"],
             "check_in": "2026-03-28", "check_out": "2026-04-02", "total_price": 2520,
             "status": "confirmed", "ai_handled": True, "source": "widget",
+            "conversation_id": session_map["Yuki Tanaka"],
         },
         {
             "property_id": pid1, "room_id": rid1, "guest_id": guest_map["Alex Kim"],
@@ -301,7 +459,7 @@ async def seed_data(
     ]
     client.table("bookings").insert(bookings_data).execute()
 
-    # ── 7. Audit log ─────────────────────────────────────────────────────
+    # ── 8. Audit log ─────────────────────────────────────────────────────
     audit_data = [
         {"property_id": pid1, "conversation_id": "conv_abc123", "source": "mcp", "tool_name": "search_rooms", "description": "Searched available rooms for March 15-20", "status": "success", "created_at": "2026-02-22T14:32:00Z"},
         {"property_id": pid1, "conversation_id": "conv_abc123", "source": "mcp", "tool_name": "create_booking", "description": "Created booking for Sarah Chen, Room 301", "status": "success", "created_at": "2026-02-22T14:33:12Z"},
@@ -318,7 +476,7 @@ async def seed_data(
     ]
     client.table("audit_log").insert(audit_data).execute()
 
-    # ── 8. Knowledge base files ──────────────────────────────────────────
+    # ── 9. Knowledge base files ──────────────────────────────────────────
     files_data = [
         {"property_id": pid1, "name": "Hotel_Policy_2026.pdf", "size": "2.4 MB", "mime_type": "application/pdf", "created_at": "2026-02-10T00:00:00Z"},
         {"property_id": pid1, "name": "WiFi_Instructions.docx", "size": "145 KB", "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "created_at": "2026-02-12T00:00:00Z"},
@@ -326,7 +484,7 @@ async def seed_data(
     ]
     client.table("knowledge_files").insert(files_data).execute()
 
-    # ── 9. Dashboard metrics (12 months for property 1) ──────────────────
+    # ── 10. Dashboard metrics (12 months for property 1) ─────────────────
     ai_bookings = [12, 18, 15, 22, 28, 25, 32, 35, 30, 38, 42, 47]
     commissions = [1200, 1800, 2100, 2400, 2200, 2800, 3100, 2900, 3400, 3800, 4200, 4650]
     occupancy = [72, 78, 80, 82, 79, 85, 88, 84, 86, 89, 87, 87]
@@ -346,7 +504,7 @@ async def seed_data(
         })
     client.table("dashboard_metrics").insert(metrics_rows).execute()
 
-    # ── 10. PMS connections ──────────────────────────────────────────────
+    # ── 11. PMS connections ──────────────────────────────────────────────
     pms_rows = [
         {"property_id": pid1, "provider": "mews", "enabled": False},
         {"property_id": pid1, "provider": "cloudbeds", "enabled": False},
@@ -354,7 +512,7 @@ async def seed_data(
     ]
     client.table("pms_connections").insert(pms_rows).execute()
 
-    # ── 11. Payment connections ──────────────────────────────────────────
+    # ── 12. Payment connections ──────────────────────────────────────────
     pay_rows = [
         {"property_id": pid1, "provider": "stripe", "enabled": False},
         {"property_id": pid1, "provider": "jpmorgan", "enabled": False},
@@ -369,6 +527,7 @@ async def seed_data(
         "properties": len(property_ids),
         "rooms": len(room_ids),
         "bookings": len(bookings_data),
+        "chat_sessions": len(sessions_data),
         "guests": len(guests_data),
         "audit_entries": len(audit_data),
         "knowledge_files": len(files_data),

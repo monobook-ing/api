@@ -12,6 +12,7 @@ from app.api.routes import (
     notifications,
     properties,
     rooms,
+    guests,
     bookings,
     audit,
     host_profile,
@@ -65,6 +66,7 @@ app.include_router(notifications.router)
 # Include routers — hotel domain
 app.include_router(properties.router)
 app.include_router(rooms.router)
+app.include_router(guests.router)
 app.include_router(bookings.router)
 app.include_router(audit.router)
 app.include_router(host_profile.router)
