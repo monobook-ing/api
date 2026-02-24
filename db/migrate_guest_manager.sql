@@ -46,19 +46,27 @@ WHERE cs.guest_id IS NULL
   AND cs.property_id = bg.property_id
   AND cs.id::TEXT = bg.conversation_id;
 
--- Fallback backfill by guest email (case-insensitive)
-WITH matched_email AS (
+-- Fallback backfill by guest email (case-insensitive).
+-- Only update when the session maps to exactly one candidate guest.
+WITH email_candidates AS (
   SELECT
     cs.id AS session_id,
-    MIN(g.id) AS guest_id
+    g.id AS guest_id
   FROM chat_sessions AS cs
   JOIN guests AS g
     ON g.property_id = cs.property_id
   WHERE cs.guest_id IS NULL
-    AND cs.guest_email IS NOT NULL
-    AND g.email IS NOT NULL
-    AND lower(cs.guest_email) = lower(g.email)
-  GROUP BY cs.id
+    AND NULLIF(btrim(cs.guest_email), '') IS NOT NULL
+    AND NULLIF(btrim(g.email), '') IS NOT NULL
+    AND lower(btrim(cs.guest_email)) = lower(btrim(g.email))
+),
+matched_email AS (
+  SELECT
+    session_id,
+    MIN(guest_id) AS guest_id
+  FROM email_candidates
+  GROUP BY session_id
+  HAVING COUNT(DISTINCT guest_id) = 1
 )
 UPDATE chat_sessions AS cs
 SET
@@ -68,18 +76,27 @@ FROM matched_email AS me
 WHERE cs.id = me.session_id
   AND cs.guest_id IS NULL;
 
--- Final fallback backfill by guest name (case-insensitive)
-WITH matched_name AS (
+-- Final fallback backfill by guest name (case-insensitive).
+-- Only update when the session maps to exactly one candidate guest.
+WITH name_candidates AS (
   SELECT
     cs.id AS session_id,
-    MIN(g.id) AS guest_id
+    g.id AS guest_id
   FROM chat_sessions AS cs
   JOIN guests AS g
     ON g.property_id = cs.property_id
   WHERE cs.guest_id IS NULL
-    AND cs.guest_name IS NOT NULL
-    AND lower(cs.guest_name) = lower(g.name)
-  GROUP BY cs.id
+    AND NULLIF(btrim(cs.guest_name), '') IS NOT NULL
+    AND NULLIF(btrim(g.name), '') IS NOT NULL
+    AND lower(btrim(cs.guest_name)) = lower(btrim(g.name))
+),
+matched_name AS (
+  SELECT
+    session_id,
+    MIN(guest_id) AS guest_id
+  FROM name_candidates
+  GROUP BY session_id
+  HAVING COUNT(DISTINCT guest_id) = 1
 )
 UPDATE chat_sessions AS cs
 SET
