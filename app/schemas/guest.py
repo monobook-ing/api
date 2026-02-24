@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 class GuestLatestBookingResponse(BaseModel):
     id: str
     room_id: str
+    room_image: str | None = None
     room_name: str
     check_in: date
     check_out: date

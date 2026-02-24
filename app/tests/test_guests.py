@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.api import deps
 from app.db.base import get_supabase
 import app.api.routes.guests as guest_routes
+from app.crud.guest import _extract_first_room_image, _map_latest_booking
 
 guest_test_app = FastAPI()
 guest_test_app.include_router(guest_routes.router)
@@ -31,6 +32,7 @@ def _sample_guest_detail() -> dict:
         "latest_booking": {
             "id": "booking-1",
             "room_id": "room-1",
+            "room_image": "https://cdn.example.com/room-1-main.jpg",
             "room_name": "Ocean View Deluxe Suite",
             "check_in": "2026-02-18",
             "check_out": "2026-02-20",
@@ -218,6 +220,10 @@ def test_patch_guest_updates_and_returns_detail(monkeypatch):
 
         assert response.status_code == 200
         assert response.json()["id"] == "guest-1"
+        assert (
+            response.json()["latest_booking"]["room_image"]
+            == "https://cdn.example.com/room-1-main.jpg"
+        )
 
         args = update_mock.await_args.args
         payload = args[3]
@@ -225,3 +231,54 @@ def test_patch_guest_updates_and_returns_detail(monkeypatch):
         assert payload["phone"] == "+1 415-555-0100"
     finally:
         guest_test_app.dependency_overrides = {}
+
+
+def test_extract_first_room_image_from_room_dict():
+    booking = {
+        "rooms": {
+            "name": "Ocean View Deluxe Suite",
+            "images": [
+                "https://cdn.example.com/room-1-main.jpg",
+                "https://cdn.example.com/room-1-secondary.jpg",
+            ],
+        }
+    }
+
+    assert _extract_first_room_image(booking) == "https://cdn.example.com/room-1-main.jpg"
+
+
+def test_extract_first_room_image_from_room_list():
+    booking = {
+        "rooms": [
+            {
+                "name": "Ocean View Deluxe Suite",
+                "images": ["https://cdn.example.com/room-1-main.jpg"],
+            }
+        ]
+    }
+
+    assert _extract_first_room_image(booking) == "https://cdn.example.com/room-1-main.jpg"
+
+
+def test_extract_first_room_image_returns_none_when_missing_or_invalid():
+    assert _extract_first_room_image({}) is None
+    assert _extract_first_room_image({"rooms": {"images": []}}) is None
+    assert _extract_first_room_image({"rooms": {"images": [123]}}) is None
+    assert _extract_first_room_image({"rooms": {"images": ["  "]}}) is None
+
+
+def test_map_latest_booking_sets_room_image_none_when_no_images():
+    booking = {
+        "id": "booking-1",
+        "room_id": "room-1",
+        "check_in": "2026-02-18",
+        "check_out": "2026-02-20",
+        "status": "confirmed",
+        "total_price": 578.0,
+        "ai_handled": True,
+        "rooms": {"name": "Ocean View Deluxe Suite", "images": []},
+    }
+
+    mapped = _map_latest_booking(booking)
+    assert mapped is not None
+    assert mapped["room_image"] is None

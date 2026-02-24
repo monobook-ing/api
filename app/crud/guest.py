@@ -21,12 +21,37 @@ def _extract_room_name(booking: dict) -> str:
     return "Unknown Room"
 
 
+def _extract_first_room_image(booking: dict) -> str | None:
+    room_data = booking.get("rooms")
+    room: dict | None = None
+
+    if isinstance(room_data, dict):
+        room = room_data
+    elif isinstance(room_data, list) and room_data and isinstance(room_data[0], dict):
+        room = room_data[0]
+
+    if not room:
+        return None
+
+    images = room.get("images")
+    if not isinstance(images, list) or not images:
+        return None
+
+    first_image = images[0]
+    if not isinstance(first_image, str):
+        return None
+
+    first_image = first_image.strip()
+    return first_image or None
+
+
 def _map_latest_booking(booking: dict | None) -> dict | None:
     if not booking:
         return None
     return {
         "id": booking["id"],
         "room_id": booking["room_id"],
+        "room_image": _extract_first_room_image(booking),
         "room_name": _extract_room_name(booking),
         "check_in": booking["check_in"],
         "check_out": booking["check_out"],
@@ -154,7 +179,7 @@ async def get_guests_by_property(
         client.table("bookings")
         .select(
             "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, ai_handled, "
-            "conversation_id, rooms(name)"
+            "conversation_id, rooms(name,images)"
         )
         .eq("property_id", property_id)
         .in_("guest_id", guest_ids)
@@ -185,7 +210,7 @@ async def get_guest_detail(client: Client, property_id: str, guest_id: str) -> d
         client.table("bookings")
         .select(
             "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, ai_handled, "
-            "conversation_id, rooms(name)"
+            "conversation_id, rooms(name,images)"
         )
         .eq("property_id", property_id)
         .eq("guest_id", guest_id)
