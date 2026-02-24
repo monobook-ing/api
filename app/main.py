@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import (
     public,
@@ -25,6 +28,17 @@ from app.mcp.server import get_mcp_asgi_app, shutdown_mcp, startup_mcp
 settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
+
+# Serve bundled ChatGPT widget assets from this API by default.
+# This avoids needing a separate static host for `/apps/chatgpt-widget.{js,css}` in common deployments.
+repo_root = Path(__file__).resolve().parents[2]
+ui_dist = repo_root / "monobook" / "dist"
+ui_apps = ui_dist / "apps"
+ui_assets = ui_dist / "assets"
+if ui_apps.is_dir():
+    app.mount("/apps", StaticFiles(directory=str(ui_apps), html=False), name="apps")
+if ui_assets.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(ui_assets), html=False), name="assets")
 
 # Add CORS middleware
 app.add_middleware(

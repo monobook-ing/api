@@ -74,16 +74,22 @@ def _resource_meta(widget_description: str) -> dict[str, Any]:
 
 
 def _widget_assets() -> tuple[str | None, str | None]:
-    if not settings.chatgpt_widget_base_url:
-        return None, None
-    base = settings.chatgpt_widget_base_url.rstrip("/")
-    return f"{base}/apps/chatgpt-widget.css", f"{base}/apps/chatgpt-widget.js"
+    """
+    Return CSS/JS asset URLs for the ChatGPT widget runtime.
+
+    - If `CHATGPT_WIDGET_BASE_URL` is set, load assets from that public base URL.
+    - Otherwise, load from the same origin as the MCP server via relative paths.
+    """
+    if settings.chatgpt_widget_base_url:
+        base = settings.chatgpt_widget_base_url.rstrip("/")
+        return f"{base}/apps/chatgpt-widget.css", f"{base}/apps/chatgpt-widget.js"
+    return "/apps/chatgpt-widget.css", "/apps/chatgpt-widget.js"
 
 
 def _render_widget_html(widget: str) -> str:
     css_url, script_url = _widget_assets()
     bootstrap = escape(json.dumps({"widget": widget}))
-    if not script_url:
+    if script_url is None:
         return (
             "<!doctype html><html><head><meta charset='utf-8'></head><body>"
             "<div style='font-family: sans-serif; padding: 12px;'>"
