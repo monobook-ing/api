@@ -14,11 +14,13 @@ from app.crud.room import (
 from app.db.base import get_supabase
 from app.schemas.room import (
     RoomCreate,
+    RoomImportRequest,
     RoomListResponse,
     RoomPricingUpdate,
     RoomResponse,
     RoomUpdate,
 )
+from app.services.airbnb_scraper import scrape_airbnb_listing, validate_airbnb_url
 
 router = APIRouter(prefix="/v1.0/properties/{property_id}/rooms", tags=["rooms"])
 
@@ -51,6 +53,61 @@ async def create_new_room(
     await _check_access(client, current_user["id"], property_id)
     data = payload.model_dump()
     room = await create_room(client, property_id, data)
+    return room
+
+
+@router.post("/import", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
+async def import_room_from_url(
+    property_id: str,
+    payload: RoomImportRequest,
+    current_user: dict = Depends(deps.get_current_user),
+    client: Client = Depends(get_supabase),
+):
+    """Import a room from an Airbnb listing URL."""
+    await _check_access(client, current_user["id"], property_id)
+
+    try:
+        canonical_url = validate_airbnb_url(payload.url)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Check for duplicate import
+    existing = (
+        client.table("rooms")
+        .select("id")
+        .eq("property_id", property_id)
+        .eq("source_url", canonical_url)
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This Airbnb listing has already been imported to this property.",
+        )
+
+    try:
+        listing = await scrape_airbnb_listing(payload.url)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
+
+    room_data = {
+        "name": listing.name,
+        "type": listing.type,
+        "description": listing.description,
+        "images": listing.images,
+        "price_per_night": listing.price_per_night,
+        "max_guests": listing.max_guests,
+        "bed_config": listing.bed_config,
+        "amenities": listing.amenities,
+        "source": "airbnb",
+        "source_url": canonical_url,
+        "sync_enabled": False,
+        "status": "active",
+    }
+
+    room = await create_room(client, property_id, room_data)
     return room
 
 
