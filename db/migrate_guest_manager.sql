@@ -63,7 +63,7 @@ WITH email_candidates AS (
 matched_email AS (
   SELECT
     session_id,
-    MIN(guest_id) AS guest_id
+    MIN(guest_id::TEXT)::UUID AS guest_id
   FROM email_candidates
   GROUP BY session_id
   HAVING COUNT(DISTINCT guest_id) = 1
@@ -93,7 +93,7 @@ WITH name_candidates AS (
 matched_name AS (
   SELECT
     session_id,
-    MIN(guest_id) AS guest_id
+    MIN(guest_id::TEXT)::UUID AS guest_id
   FROM name_candidates
   GROUP BY session_id
   HAVING COUNT(DISTINCT guest_id) = 1
