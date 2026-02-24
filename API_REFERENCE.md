@@ -316,7 +316,22 @@ curl http://localhost:8000/v1.0/properties/prop-uuid-1/audit \
 # Filter by source, paginated
 curl "http://localhost:8000/v1.0/properties/prop-uuid-1/audit?source=mcp&limit=10" \
   -H "Authorization: Bearer $TOKEN"
+
+# Filter by inclusive created_at range (ISO datetimes)
+curl "http://localhost:8000/v1.0/properties/prop-uuid-1/audit?from=2026-02-22T00:00:00Z&to=2026-02-22T23:59:59Z" \
+  -H "Authorization: Bearer $TOKEN"
 ```
+Query params:
+- `source` (optional): one of `mcp`, `chatgpt`, `claude`, `gemini`, `widget`
+- `from` (optional): ISO-8601 datetime, includes entries where `created_at >= from`
+- `to` (optional): ISO-8601 datetime, includes entries where `created_at <= to`
+- `limit` (optional): 1-100
+- `cursor` (optional): pagination cursor from previous response
+
+Notes:
+- Date boundaries are inclusive.
+- If both `from` and `to` are provided, `from` must be less than or equal to `to`.
+
 **Response 200:**
 ```json
 {

@@ -10,6 +10,8 @@ async def get_audit_log(
     client: Client,
     property_id: str,
     source: str | None = None,
+    from_dt: str | None = None,
+    to_dt: str | None = None,
     limit: int = 50,
     cursor: str | None = None,
 ) -> tuple[list[dict], str | None]:
@@ -21,6 +23,10 @@ async def get_audit_log(
     )
     if source:
         query = query.eq("source", source)
+    if from_dt:
+        query = query.gte("created_at", from_dt)
+    if to_dt:
+        query = query.lte("created_at", to_dt)
     if cursor:
         decoded = json.loads(base64.b64decode(cursor))
         query = query.lt("created_at", decoded["created_at"])

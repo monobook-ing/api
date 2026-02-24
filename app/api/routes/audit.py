@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
@@ -16,6 +18,8 @@ ALLOWED_AUDIT_SOURCES = {"mcp", "chatgpt", "claude", "gemini", "widget"}
 async def list_audit_log(
     property_id: str,
     source: str | None = Query(None, description="Filter by source: mcp, chatgpt, claude, gemini, widget"),
+    from_dt: datetime | None = Query(None, alias="from", description="Filter by created_at >= this ISO datetime"),
+    to_dt: datetime | None = Query(None, alias="to", description="Filter by created_at <= this ISO datetime"),
     limit: int = Query(50, ge=1, le=100),
     cursor: str | None = None,
     current_user: dict = Depends(deps.get_current_user),
@@ -31,6 +35,11 @@ async def list_audit_log(
                 + ", ".join(sorted(ALLOWED_AUDIT_SOURCES))
             ),
         )
+    if from_dt and to_dt and from_dt > to_dt:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'from' must be less than or equal to 'to'",
+        )
 
     if not await user_owns_property(client, current_user["id"], property_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
@@ -38,6 +47,8 @@ async def list_audit_log(
         client,
         property_id,
         source=normalized_source,
+        from_dt=from_dt.isoformat() if from_dt else None,
+        to_dt=to_dt.isoformat() if to_dt else None,
         limit=limit,
         cursor=cursor,
     )
