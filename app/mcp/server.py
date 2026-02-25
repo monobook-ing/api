@@ -35,6 +35,17 @@ def _origin(url: str | None) -> str | None:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def _ordered_unique(values: list[str | None]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
 def _security_schemes() -> list[dict[str, str]]:
     if settings.mcp_shared_secret:
         # ChatGPT Apps currently validates only `noauth` / `oauth` tagged schemes.
@@ -56,11 +67,16 @@ def _tool_meta(output_template: str, invoking: str, invoked: str) -> dict[str, A
 def _resource_meta(widget_description: str) -> dict[str, Any]:
     mcp_origin = _origin(settings.mcp_public_base_url)
     widget_origin = _origin(settings.chatgpt_widget_base_url)
+    css_url, script_url = _widget_assets()
+    css_origin = _origin(css_url)
+    script_origin = _origin(script_url)
 
     connect_domains = [d for d in [mcp_origin] if d]
-    # Allow script/CSS loading from both widget domain AND MCP origin (assets
-    # are served from the API when CHATGPT_WIDGET_BASE_URL is not set separately).
-    resource_domains = list({d for d in [widget_origin, mcp_origin] if d})
+    # Allow script/CSS loading from configured widget domain, MCP origin, and
+    # explicit asset origins when split-domain hosting is used.
+    resource_domains = _ordered_unique(
+        [widget_origin, mcp_origin, css_origin, script_origin]
+    )
 
     meta: dict[str, Any] = {
         "openai/widgetDescription": widget_description,
@@ -81,15 +97,30 @@ def _widget_assets() -> tuple[str | None, str | None]:
     """
     Return CSS/JS asset URLs for the ChatGPT widget runtime.
 
-    - If `CHATGPT_WIDGET_BASE_URL` is set, load assets from that public base URL.
-    - Falls back to `MCP_PUBLIC_BASE_URL` (assets are served from the same origin).
+    - If explicit `CHATGPT_WIDGET_JS_URL` + `CHATGPT_WIDGET_CSS_URL` are set,
+      use those URLs as-is.
+    - Else if `CHATGPT_WIDGET_BASE_URL` is set, load assets from that public
+      base URL (`/apps/chatgpt-widget.{js,css}`).
+    - Falls back to `MCP_PUBLIC_BASE_URL` in legacy mode.
     - Otherwise, load from the same origin as the MCP server via relative paths.
     """
+    if settings.chatgpt_widget_js_url or settings.chatgpt_widget_css_url:
+        if not (settings.chatgpt_widget_js_url and settings.chatgpt_widget_css_url):
+            raise ValueError(
+                "CHATGPT_WIDGET_JS_URL and CHATGPT_WIDGET_CSS_URL must be set together."
+            )
+        return settings.chatgpt_widget_css_url, settings.chatgpt_widget_js_url
+
     base_url = settings.chatgpt_widget_base_url or settings.mcp_public_base_url
     if base_url:
         base = base_url.rstrip("/")
         return f"{base}/apps/chatgpt-widget.css", f"{base}/apps/chatgpt-widget.js"
     return "/apps/chatgpt-widget.css", "/apps/chatgpt-widget.js"
+
+
+def get_widget_asset_urls() -> tuple[str | None, str | None]:
+    """Resolve widget CSS/JS asset URLs based on runtime configuration."""
+    return _widget_assets()
 
 
 def _render_widget_html(widget: str) -> str:
@@ -99,7 +130,7 @@ def _render_widget_html(widget: str) -> str:
         return (
             "<!doctype html><html><head><meta charset='utf-8'></head><body>"
             "<div style='font-family: sans-serif; padding: 12px;'>"
-            "Widget runtime is not configured. Set CHATGPT_WIDGET_BASE_URL to enable rendering."
+            "Widget runtime is not configured. Set widget asset URLs to enable rendering."
             "</div></body></html>"
         )
 
@@ -113,7 +144,12 @@ def _render_widget_html(widget: str) -> str:
         f"{css_tag}"
         "</head>"
         "<body>"
-        "<div id='monobook-widget-root'></div>"
+        "<div id='monobook-widget-root'>"
+        "<div style='font-family: Inter, -apple-system, BlinkMacSystemFont, "
+        "Segoe UI, sans-serif; padding: 12px; color: #374151;'>"
+        "Loading booking widget... If this persists, verify widget JS/CSS URLs."
+        "</div>"
+        "</div>"
         f"<script id='monobook-widget-bootstrap' type='application/json'>{bootstrap}</script>"
         f"<script type='module' src='{escape(script_url)}'></script>"
         "</body>"

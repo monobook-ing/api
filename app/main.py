@@ -1,8 +1,11 @@
+import asyncio
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+import httpx
 
 from app.api.routes import (
     public,
@@ -24,11 +27,98 @@ from app.api.routes import (
     chat,
 )
 from app.core.config import get_settings
-from app.mcp.server import get_mcp_asgi_app, shutdown_mcp, startup_mcp
+from app.mcp.server import (
+    get_mcp_asgi_app,
+    get_widget_asset_urls,
+    shutdown_mcp,
+    startup_mcp,
+)
 
 settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
+
+
+def _is_absolute_http_url(url: str | None) -> bool:
+    if not url:
+        return False
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _is_success(status_code: int) -> bool:
+    return 200 <= status_code < 400
+
+
+async def _check_widget_asset(
+    client: httpx.AsyncClient,
+    *,
+    label: str,
+    url: str,
+) -> None:
+    try:
+        head_response = await client.head(url, follow_redirects=True)
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            f"Widget {label} asset check failed for {url}: HEAD request error ({exc})."
+        ) from exc
+
+    if _is_success(head_response.status_code):
+        return
+
+    try:
+        get_response = await client.get(url, follow_redirects=True)
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            f"Widget {label} asset check failed for {url}: "
+            f"HEAD {head_response.status_code}; GET request error ({exc})."
+        ) from exc
+
+    if _is_success(get_response.status_code):
+        return
+
+    raise RuntimeError(
+        f"Widget {label} asset check failed for {url}: "
+        f"HEAD {head_response.status_code}, GET {get_response.status_code}."
+    )
+
+
+async def validate_widget_runtime_assets() -> None:
+    """
+    Fail startup when configured widget assets are unreachable.
+
+    Relative URLs are skipped because they are served by this app at runtime.
+    """
+    # Enforce fail-fast checks only for explicit split-domain asset mode.
+    if not (settings.chatgpt_widget_js_url and settings.chatgpt_widget_css_url):
+        return
+
+    css_url, js_url = get_widget_asset_urls()
+    raw_targets = [
+        ("CSS", css_url),
+        ("JS", js_url),
+    ]
+    absolute_targets = [
+        (label, url)
+        for label, url in raw_targets
+        if url and _is_absolute_http_url(url)
+    ]
+    if not absolute_targets:
+        return
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+        results = await asyncio.gather(
+            *[
+                _check_widget_asset(client, label=label, url=url)
+                for label, url in absolute_targets
+            ],
+            return_exceptions=True,
+        )
+
+    failures = [result for result in results if isinstance(result, Exception)]
+    if failures:
+        details = "; ".join(str(failure) for failure in failures)
+        raise RuntimeError(f"Widget runtime asset validation failed: {details}")
 
 # Serve bundled ChatGPT widget assets from this API by default.
 # This avoids needing a separate static host for `/apps/chatgpt-widget.{js,css}` in common deployments.
@@ -85,6 +175,7 @@ app.mount("/mcp", get_mcp_asgi_app())
 
 @app.on_event("startup")
 async def _startup_mcp() -> None:
+    await validate_widget_runtime_assets()
     await startup_mcp()
 
 
