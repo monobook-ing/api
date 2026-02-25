@@ -119,6 +119,10 @@ async def search_rooms(
                 available_rooms.append(room)
         rooms = available_rooms
 
+    # Fetch property name for display
+    prop = await get_property_by_id(client, property_id)
+    property_name = prop.get("name", "") if prop else ""
+
     await log_tool_call(
         client, property_id, session_id, "search_rooms",
         f"Searched rooms: '{query}'", "success",
@@ -129,6 +133,7 @@ async def search_rooms(
 
     return {
         "property_id": property_id,
+        "property_name": property_name,
         "rooms": [
             {
                 "id": r["id"],
