@@ -58,7 +58,9 @@ def _resource_meta(widget_description: str) -> dict[str, Any]:
     widget_origin = _origin(settings.chatgpt_widget_base_url)
 
     connect_domains = [d for d in [mcp_origin] if d]
-    resource_domains = [d for d in [widget_origin] if d]
+    # Allow script/CSS loading from both widget domain AND MCP origin (assets
+    # are served from the API when CHATGPT_WIDGET_BASE_URL is not set separately).
+    resource_domains = list({d for d in [widget_origin, mcp_origin] if d})
 
     meta: dict[str, Any] = {
         "openai/widgetDescription": widget_description,
@@ -70,6 +72,8 @@ def _resource_meta(widget_description: str) -> dict[str, Any]:
     }
     if widget_origin:
         meta["openai/widgetDomain"] = widget_origin
+    elif mcp_origin:
+        meta["openai/widgetDomain"] = mcp_origin
     return meta
 
 
@@ -78,10 +82,12 @@ def _widget_assets() -> tuple[str | None, str | None]:
     Return CSS/JS asset URLs for the ChatGPT widget runtime.
 
     - If `CHATGPT_WIDGET_BASE_URL` is set, load assets from that public base URL.
+    - Falls back to `MCP_PUBLIC_BASE_URL` (assets are served from the same origin).
     - Otherwise, load from the same origin as the MCP server via relative paths.
     """
-    if settings.chatgpt_widget_base_url:
-        base = settings.chatgpt_widget_base_url.rstrip("/")
+    base_url = settings.chatgpt_widget_base_url or settings.mcp_public_base_url
+    if base_url:
+        base = base_url.rstrip("/")
         return f"{base}/apps/chatgpt-widget.css", f"{base}/apps/chatgpt-widget.js"
     return "/apps/chatgpt-widget.css", "/apps/chatgpt-widget.js"
 
