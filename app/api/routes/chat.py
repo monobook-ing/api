@@ -210,6 +210,7 @@ async def send_chat_message(
     async def event_stream():
         """SSE event generator."""
         full_response = ""
+        tool_results: list[dict] = []
         try:
             # Send start event
             yield f"data: {json.dumps({'type': 'message_start'})}\n\n"
@@ -239,6 +240,19 @@ async def send_chat_message(
                 elif event.type == "agent_updated_stream_event":
                     agent_name = event.new_agent.name if event.new_agent else "unknown"
                     yield f"data: {json.dumps({'type': 'agent_handoff', 'agent': agent_name})}\n\n"
+                elif event.type == "run_item_stream_event" and event.name == "tool_output":
+                    # Capture structured tool results (e.g. room search)
+                    try:
+                        output = event.item.output
+                        if isinstance(output, str):
+                            parsed = json.loads(output)
+                        else:
+                            parsed = output
+                        if isinstance(parsed, dict) and "rooms" in parsed and isinstance(parsed["rooms"], list):
+                            tool_results.append({"tool": "search_rooms", "data": parsed})
+                            yield f"data: {json.dumps({'type': 'tool_result', 'tool': 'search_rooms', 'data': parsed})}\n\n"
+                    except (json.JSONDecodeError, AttributeError, TypeError):
+                        pass
 
             # Get final output
             final_result = result.final_output
@@ -246,9 +260,10 @@ async def send_chat_message(
                 full_response = str(final_result)
                 yield f"data: {json.dumps({'type': 'text_delta', 'delta': full_response})}\n\n"
 
-            # Save assistant message
+            # Save assistant message (include tool results in metadata)
             if full_response:
-                await create_message(client, session_id, "assistant", full_response)
+                msg_metadata = {"tool_results": tool_results} if tool_results else None
+                await create_message(client, session_id, "assistant", full_response, metadata=msg_metadata)
 
             # Send end event
             yield f"data: {json.dumps({'type': 'message_end', 'content': full_response})}\n\n"
