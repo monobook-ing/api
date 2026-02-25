@@ -128,6 +128,55 @@ def test_resource_meta_includes_asset_origins(monkeypatch):
     assert meta["openai/widgetDomain"] == "https://api.example.com"
 
 
+def test_render_widget_html_uses_external_asset_tags(monkeypatch):
+    css_url = "https://static.example.com/widgets/widget.css"
+    js_url = "https://static.example.com/widgets/widget.js"
+    monkeypatch.setattr(
+        mcp_server,
+        "settings",
+        SimpleNamespace(
+            chatgpt_widget_js_url=js_url,
+            chatgpt_widget_css_url=css_url,
+            chatgpt_widget_base_url=None,
+            mcp_public_base_url="https://api.example.com",
+            mcp_shared_secret=None,
+            openai_api_key=None,
+        ),
+    )
+
+    html = mcp_server._render_widget_html("search_hotels")
+
+    assert f"<link rel='stylesheet' href='{css_url}' />" in html
+    assert f"<script type='module' src='{js_url}'></script>" in html
+    assert "<style>" not in html
+    assert '<script id=\'monobook-widget-bootstrap\' type=\'application/json\'>{"widget": "search_hotels"}</script>' in html
+
+
+def test_widget_resources_embed_distinct_widget_bootstrap_values(monkeypatch):
+    css_url = "https://static.example.com/widgets/widget.css"
+    js_url = "https://static.example.com/widgets/widget.js"
+    monkeypatch.setattr(
+        mcp_server,
+        "settings",
+        SimpleNamespace(
+            chatgpt_widget_js_url=js_url,
+            chatgpt_widget_css_url=css_url,
+            chatgpt_widget_base_url=None,
+            mcp_public_base_url="https://api.example.com",
+            mcp_shared_secret=None,
+            openai_api_key=None,
+        ),
+    )
+
+    hotels_html = mcp_server.mcp_search_hotels_widget()
+    rooms_html = mcp_server.mcp_search_rooms_widget()
+
+    assert '{"widget": "search_hotels"}' in hotels_html
+    assert '{"widget": "search_rooms"}' in rooms_html
+    assert f"<script type='module' src='{js_url}'></script>" in hotels_html
+    assert f"<script type='module' src='{js_url}'></script>" in rooms_html
+
+
 def _build_async_client(status_by_method_and_url: dict[tuple[str, str], int]):
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):

@@ -59,10 +59,12 @@ This starter does not bundle a migrations tool; initialize your database schema 
 ### MCP Integration Environment Variables
 
 - `MCP_SHARED_SECRET` (required for MCP access): shared key expected in `X-Monobook-MCP-Key`
-- `MCP_PUBLIC_BASE_URL` (optional): public API base URL used for widget CSP metadata and legacy widget asset fallback.
-- `CHATGPT_WIDGET_BASE_URL` (optional, legacy): base URL used to derive `/apps/chatgpt-widget.js` and `/apps/chatgpt-widget.css`.
+- `MCP_PUBLIC_BASE_URL` (optional): public API base URL used for widget CSP metadata and fallback asset URL derivation.
+- `CHATGPT_WIDGET_BASE_URL` (optional, legacy): base URL used to derive `/apps/chatgpt-widget.js` and `/apps/chatgpt-widget.css` when explicit URLs are not set.
 - `CHATGPT_WIDGET_JS_URL` (recommended): full public URL to widget JS bundle.
 - `CHATGPT_WIDGET_CSS_URL` (recommended): full public URL to widget CSS bundle.
+
+The search widget runtime is loaded as external JS/CSS references (no inline asset cache). This ensures new widget deploys are picked up without API restarts.
 
 ### MCP Tools
 
@@ -88,6 +90,19 @@ CHATGPT_WIDGET_CSS_URL=https://static.example.com/widgets/chatgpt-widget.css
 - Placeholder hosts (for example, `your-api-domain.com`) are rejected for explicit widget asset URLs.
 - On startup, when explicit widget URLs are configured, the API performs reachability checks (`HEAD`, then `GET` fallback).
 - If an explicit widget asset is unreachable or returns non-success, startup fails with a clear runtime error.
+
+#### Widget source of truth
+
+- `search_hotels` and `search_rooms` both use the same ChatGPT widget runtime bundle.
+- In this repo, API static fallback serves `/apps/*` from `apps-sdk/chatgpt/dist/apps` first.
+- Use the Apps SDK widget build as the canonical release artifact for search widget UI updates.
+
+#### Recommended deploy order for widget updates
+
+1. Build widget assets from `apps-sdk/chatgpt`.
+2. Deploy `chatgpt-widget.js` and `chatgpt-widget.css` to your public widget host.
+3. Update `CHATGPT_WIDGET_JS_URL` and `CHATGPT_WIDGET_CSS_URL` if paths changed.
+4. Restart API only when configuration changed (asset content updates alone do not require restart).
 
 #### Troubleshooting white widget frames in ChatGPT
 
