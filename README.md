@@ -64,6 +64,13 @@ This starter does not bundle a migrations tool; initialize your database schema 
 - `CHATGPT_WIDGET_JS_URL` (recommended): full public URL to widget JS bundle.
 - `CHATGPT_WIDGET_CSS_URL` (recommended): full public URL to widget CSS bundle.
 
+### MCP Tools
+
+- `search_hotels(...)` — cross-property hotel discovery with filters for location, availability, guests, pet-friendly, and budget.
+- `search_rooms(property_id, ...)` — property-scoped room search (backward-compatible tool).
+- `check_availability(property_id, room_id, check_in, check_out)` — room availability check.
+- `create_booking(property_id, room_id, guest_name, ...)` — confirmed booking creation.
+
 #### Recommended split-domain setup
 
 Use explicit full asset URLs when widget assets are hosted on a separate static domain:

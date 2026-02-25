@@ -12,7 +12,12 @@ from mcp.types import ToolAnnotations
 from starlette.types import ASGIApp
 from supabase import Client
 
-from app.agents.tools import check_availability, search_rooms, tool_create_booking
+from app.agents.tools import (
+    check_availability,
+    search_hotels,
+    search_rooms,
+    tool_create_booking,
+)
 from app.api.deps import validate_property_id
 from app.core.config import get_settings
 from app.crud.ai_connection import get_decrypted_api_key
@@ -22,6 +27,7 @@ from app.mcp.auth import MCPHeaderAuthApp
 settings = get_settings()
 
 SEARCH_WIDGET_URI = "ui://widget/search-rooms.html"
+HOTELS_WIDGET_URI = "ui://widget/search-hotels.html"
 AVAILABILITY_WIDGET_URI = "ui://widget/check-availability.html"
 BOOKING_WIDGET_URI = "ui://widget/booking-confirmation.html"
 
@@ -197,8 +203,9 @@ async def _get_openai_api_key(client: Client, property_id: str) -> str:
 mcp_server = FastMCP(
     name="Monobooking MCP Server",
     instructions=(
-        "Tools for hotel room search, availability checks, and booking creation. "
-        "Always pass a valid UUID property_id and ISO dates."
+        "Use search_hotels for cross-property hotel discovery by location and filters. "
+        "Use property-specific tools search_rooms, check_availability, and create_booking "
+        "when you already have a valid UUID property_id. Always pass ISO dates."
     ),
     streamable_http_path="/",
     stateless_http=True,
@@ -207,6 +214,75 @@ mcp_server = FastMCP(
         enable_dns_rebinding_protection=False
     ),
 )
+
+
+@mcp_server.tool(
+    name="search_hotels",
+    description=(
+        "Search hotels across properties by query, location, and room constraints. "
+        "Supports city/country/property name/room name/coordinates, availability, guests, "
+        "pet-friendly, and budget filters."
+    ),
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=HOTELS_WIDGET_URI,
+        invoking="Searching hotels...",
+        invoked="Hotel results ready.",
+    ),
+    structured_output=True,
+)
+async def mcp_search_hotels(
+    query: str = "",
+    property_name: str | None = None,
+    city: str | None = None,
+    country: str | None = None,
+    room_name: str | None = None,
+    lat: float | None = None,
+    lng: float | None = None,
+    radius_km: float = 20.0,
+    check_in: str | None = None,
+    check_out: str | None = None,
+    guests: int | None = None,
+    pet_friendly: bool | None = None,
+    budget_per_night_max: float | None = None,
+    budget_total_max: float | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    result = await search_hotels(
+        client=client,
+        query=query,
+        property_name=property_name,
+        city=city,
+        country=country,
+        room_name=room_name,
+        lat=lat,
+        lng=lng,
+        radius_km=radius_km,
+        check_in=check_in,
+        check_out=check_out,
+        guests=guests,
+        pet_friendly=pet_friendly,
+        budget_per_night_max=budget_per_night_max,
+        budget_total_max=budget_total_max,
+        session_id=session_id,
+        source="chatgpt",
+    )
+    if "error" in result:
+        return _tool_error(str(result["error"]), "search_hotels")
+
+    count = result.get("count_hotels", 0)
+    return _tool_result(
+        text=f"Found {count} hotel(s).",
+        structured_content=result,
+        widget="search_hotels",
+    )
 
 
 @mcp_server.tool(
@@ -377,6 +453,19 @@ async def mcp_create_booking(
         structured_content=result,
         widget="create_booking",
     )
+
+
+@mcp_server.resource(
+    HOTELS_WIDGET_URI,
+    name="Monobook Hotel Discovery Widget",
+    description="Interactive hotel discovery widget for cross-property search.",
+    mime_type="text/html",
+    meta=_resource_meta(
+        "Browse matched hotels and rooms across locations with advanced filters."
+    ),
+)
+def mcp_search_hotels_widget() -> str:
+    return _render_widget_html("search_hotels")
 
 
 @mcp_server.resource(
