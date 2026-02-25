@@ -98,6 +98,7 @@ async def import_room_from_url(
         "description": listing.description,
         "images": listing.images,
         "price_per_night": listing.price_per_night,
+        "currency_code": "USD",
         "max_guests": listing.max_guests,
         "bed_config": listing.bed_config,
         "amenities": listing.amenities,

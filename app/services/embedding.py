@@ -2,18 +2,30 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
-from openai import OpenAI
 from supabase import Client
 
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - depends on environment package version
+    OpenAI = None  # type: ignore[assignment]
+
 from app.core.config import get_settings
+from app.crud.currency import (
+    get_currency_display_map,
+    normalize_currency_code,
+    resolve_currency_display,
+)
 
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
 
-def _get_openai_client(api_key: str) -> OpenAI:
+def _get_openai_client(api_key: str) -> Any:
+    if OpenAI is None:
+        raise RuntimeError("OpenAI client is unavailable. Install openai>=1.0.0")
     return OpenAI(api_key=api_key)
 
 
@@ -131,10 +143,17 @@ async def embed_room(
         return 0
 
     r = room.data
+    currency_code = normalize_currency_code(r.get("currency_code"))
+    currency_display_map = await get_currency_display_map(client, [currency_code])
+    currency_display = resolve_currency_display(currency_code, currency_display_map)
     parts = [f"Room: {r['name']} ({r['type']})"]
     if r.get("description"):
         parts.append(r["description"])
-    parts.append(f"Price: ${r['price_per_night']}/night, Max guests: {r['max_guests']}")
+    if any(ch.isalpha() for ch in currency_display):
+        price_text = f"{r['price_per_night']} {currency_display}/night"
+    else:
+        price_text = f"{currency_display}{r['price_per_night']}/night"
+    parts.append(f"Price: {price_text}, Max guests: {r['max_guests']}")
     if r.get("bed_config"):
         parts.append(f"Bed: {r['bed_config']}")
     if r.get("amenities"):

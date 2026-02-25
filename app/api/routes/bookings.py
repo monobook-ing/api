@@ -61,6 +61,7 @@ async def create_new_booking(
         "check_in": payload.check_in.isoformat(),
         "check_out": payload.check_out.isoformat(),
         "total_price": payload.total_price,
+        "currency_code": payload.currency_code,
         "status": payload.status,
         "ai_handled": payload.ai_handled,
         "source": payload.source,

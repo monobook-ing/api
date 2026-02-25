@@ -4,6 +4,13 @@ from datetime import datetime, timezone
 
 from supabase import Client
 
+from app.crud.currency import (
+    DEFAULT_CURRENCY_CODE,
+    get_currency_display_map,
+    normalize_currency_code,
+    resolve_currency_display,
+)
+
 
 def _as_float(value: object) -> float:
     try:
@@ -45,9 +52,13 @@ def _extract_first_room_image(booking: dict) -> str | None:
     return first_image or None
 
 
-def _map_latest_booking(booking: dict | None) -> dict | None:
+def _map_latest_booking(
+    booking: dict | None, currency_display_map: dict[str, str] | None = None
+) -> dict | None:
     if not booking:
         return None
+    currency_display_map = currency_display_map or {}
+    currency_code = normalize_currency_code(booking.get("currency_code"))
     return {
         "id": booking["id"],
         "room_id": booking["room_id"],
@@ -57,14 +68,23 @@ def _map_latest_booking(booking: dict | None) -> dict | None:
         "check_out": booking["check_out"],
         "status": booking["status"],
         "total_price": _as_float(booking.get("total_price")),
+        "currency_code": currency_code,
+        "currency_display": resolve_currency_display(currency_code, currency_display_map),
         "ai_handled": bool(booking.get("ai_handled", False)),
         "source": booking.get("source"),
     }
 
 
-def _build_guest_summary(guest: dict, bookings: list[dict]) -> dict:
+def _build_guest_summary(
+    guest: dict, bookings: list[dict], currency_display_map: dict[str, str]
+) -> dict:
     sorted_bookings = sorted(bookings, key=lambda row: row.get("check_in", ""), reverse=True)
     latest_booking = sorted_bookings[0] if sorted_bookings else None
+    total_spent_currency_code = (
+        normalize_currency_code(latest_booking.get("currency_code"))
+        if latest_booking
+        else DEFAULT_CURRENCY_CODE
+    )
     last_stay_date = None
     if sorted_bookings:
         last_stay_date = max(
@@ -82,13 +102,18 @@ def _build_guest_summary(guest: dict, bookings: list[dict]) -> dict:
         "total_stays": len(sorted_bookings),
         "last_stay_date": last_stay_date,
         "total_spent": sum(_as_float(booking.get("total_price")) for booking in sorted_bookings),
-        "latest_booking": _map_latest_booking(latest_booking),
+        "total_spent_currency_code": total_spent_currency_code,
+        "total_spent_currency_display": resolve_currency_display(
+            total_spent_currency_code, currency_display_map
+        ),
+        "latest_booking": _map_latest_booking(latest_booking, currency_display_map),
         "created_at": guest["created_at"],
         "updated_at": guest.get("updated_at") or guest["created_at"],
     }
 
 
-def _map_booking(booking: dict) -> dict:
+def _map_booking(booking: dict, currency_display_map: dict[str, str]) -> dict:
+    currency_code = normalize_currency_code(booking.get("currency_code"))
     return {
         "id": booking["id"],
         "guest_id": booking["guest_id"],
@@ -99,6 +124,8 @@ def _map_booking(booking: dict) -> dict:
         "check_out": booking["check_out"],
         "status": booking["status"],
         "total_price": _as_float(booking.get("total_price")),
+        "currency_code": currency_code,
+        "currency_display": resolve_currency_display(currency_code, currency_display_map),
         "ai_handled": bool(booking.get("ai_handled", False)),
         "source": booking.get("source"),
         "conversation_id": booking.get("conversation_id"),
@@ -180,7 +207,7 @@ async def get_guests_by_property(
     booking_rows = (
         client.table("bookings")
         .select(
-            "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, ai_handled, source, "
+            "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, currency_code, ai_handled, source, "
             "conversation_id, rooms(name,images)"
         )
         .eq("property_id", property_id)
@@ -190,6 +217,9 @@ async def get_guests_by_property(
         .data
         or []
     )
+    currency_display_map = await get_currency_display_map(
+        client, [booking.get("currency_code") for booking in booking_rows]
+    )
 
     bookings_by_guest: dict[str, list[dict]] = {guest_id: [] for guest_id in guest_ids}
     for booking in booking_rows:
@@ -198,7 +228,11 @@ async def get_guests_by_property(
             bookings_by_guest[booking_guest_id].append(booking)
 
     return [
-        _build_guest_summary(guest, bookings_by_guest.get(guest["id"], []))
+        _build_guest_summary(
+            guest,
+            bookings_by_guest.get(guest["id"], []),
+            currency_display_map,
+        )
         for guest in guests
     ]
 
@@ -211,7 +245,7 @@ async def get_guest_detail(client: Client, property_id: str, guest_id: str) -> d
     booking_rows = (
         client.table("bookings")
         .select(
-            "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, ai_handled, source, "
+            "id, guest_id, room_id, property_id, check_in, check_out, status, total_price, currency_code, ai_handled, source, "
             "conversation_id, rooms(name,images)"
         )
         .eq("property_id", property_id)
@@ -220,6 +254,9 @@ async def get_guest_detail(client: Client, property_id: str, guest_id: str) -> d
         .execute()
         .data
         or []
+    )
+    currency_display_map = await get_currency_display_map(
+        client, [booking.get("currency_code") for booking in booking_rows]
     )
 
     session_rows = (
@@ -253,8 +290,10 @@ async def get_guest_detail(client: Client, property_id: str, guest_id: str) -> d
                 _map_conversation_message(message)
             )
 
-    detail = _build_guest_summary(guest, booking_rows)
-    detail["bookings"] = [_map_booking(booking) for booking in booking_rows]
+    detail = _build_guest_summary(guest, booking_rows, currency_display_map)
+    detail["bookings"] = [
+        _map_booking(booking, currency_display_map) for booking in booking_rows
+    ]
     detail["conversations"] = [
         {
             "id": session["id"],

@@ -26,6 +26,7 @@ class RoomCreate(BaseModel):
     description: str = ""
     images: list[str] = []
     price_per_night: float = Field(..., gt=0)
+    currency_code: str = Field("USD", min_length=3, max_length=3)
     max_guests: int = Field(2, ge=1)
     bed_config: str = ""
     amenities: list[str] = []
@@ -41,6 +42,7 @@ class RoomUpdate(BaseModel):
     description: str | None = None
     images: list[str] | None = None
     price_per_night: float | None = Field(None, gt=0)
+    currency_code: str | None = Field(None, min_length=3, max_length=3)
     max_guests: int | None = Field(None, ge=1)
     bed_config: str | None = None
     amenities: list[str] | None = None
@@ -76,6 +78,8 @@ class RoomResponse(BaseModel):
     description: str
     images: list[str]
     price_per_night: float
+    currency_code: str = "USD"
+    currency_display: str = "$"
     max_guests: int
     bed_config: str
     amenities: list[str]

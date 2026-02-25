@@ -1,16 +1,60 @@
 from __future__ import annotations
 
 import json
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from html import escape
 from typing import Any
 from urllib.parse import urlparse
 
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
 from starlette.types import ASGIApp
 from supabase import Client
+
+try:
+    from mcp.server.fastmcp import Context, FastMCP
+    from mcp.server.transport_security import TransportSecuritySettings
+    from mcp.types import ToolAnnotations
+except ModuleNotFoundError:  # pragma: no cover - depends on installed extras
+    class Context:  # type: ignore[no-redef]
+        request_id: Any | None = None
+
+    class TransportSecuritySettings:  # type: ignore[no-redef]
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+    class ToolAnnotations:  # type: ignore[no-redef]
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+    class _FallbackSessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield
+
+    class FastMCP:  # type: ignore[no-redef]
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            self._session_manager = _FallbackSessionManager()
+
+        @property
+        def session_manager(self) -> _FallbackSessionManager:
+            return self._session_manager
+
+        def tool(self, *_args: Any, **_kwargs: Any):
+            def decorator(func):
+                return func
+
+            return decorator
+
+        def resource(self, *_args: Any, **_kwargs: Any):
+            def decorator(func):
+                return func
+
+            return decorator
+
+        def streamable_http_app(self):
+            async def app(scope, receive, send):  # type: ignore[no-untyped-def]
+                raise RuntimeError("MCP runtime dependency is missing.")
+
+            return app
 
 from app.agents.tools import (
     check_availability,
@@ -20,6 +64,11 @@ from app.agents.tools import (
 )
 from app.api.deps import validate_property_id
 from app.core.config import get_settings
+from app.crud.currency import (
+    get_currency_display_map,
+    normalize_currency_code,
+    resolve_currency_display,
+)
 from app.crud.ai_connection import get_decrypted_api_key
 from app.db.base import get_supabase_client
 from app.mcp.auth import MCPHeaderAuthApp
@@ -376,7 +425,10 @@ async def mcp_check_availability(
 
     room_response = (
         client.table("rooms")
-        .select("id, property_id, name, type, description, price_per_night, max_guests, amenities, images")
+        .select(
+            "id, property_id, name, type, description, price_per_night, "
+            "currency_code, max_guests, amenities, images"
+        )
         .eq("id", room_id)
         .eq("property_id", property_id)
         .single()
@@ -384,6 +436,8 @@ async def mcp_check_availability(
     )
     if room_response.data:
         room = room_response.data
+        currency_code = normalize_currency_code(room.get("currency_code"))
+        currency_display_map = await get_currency_display_map(client, [currency_code])
         result["room"] = {
             "id": room["id"],
             "property_id": room["property_id"],
@@ -391,6 +445,10 @@ async def mcp_check_availability(
             "type": room["type"],
             "description": room.get("description", ""),
             "price_per_night": str(room["price_per_night"]),
+            "currency_code": currency_code,
+            "currency_display": resolve_currency_display(
+                currency_code, currency_display_map
+            ),
             "max_guests": room.get("max_guests"),
             "amenities": room.get("amenities", []),
             "images": room.get("images", []),

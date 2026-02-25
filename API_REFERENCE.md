@@ -123,6 +123,10 @@ curl -X DELETE http://localhost:8000/v1.0/properties/prop-uuid-1 \
 
 ## Rooms
 
+Notes:
+- `currency_code` is accepted on create/update; existing and omitted values default to `USD`.
+- Room responses include `currency_code` and `currency_display` for UI rendering.
+
 ### GET /v1.0/properties/{property_id}/rooms — List rooms
 ```bash
 curl http://localhost:8000/v1.0/properties/prop-uuid-1/rooms \
@@ -140,6 +144,8 @@ curl http://localhost:8000/v1.0/properties/prop-uuid-1/rooms \
       "description": "Spacious suite with panoramic ocean views...",
       "images": [],
       "price_per_night": 289.0,
+      "currency_code": "USD",
+      "currency_display": "$",
       "max_guests": 3,
       "bed_config": "1 King Bed",
       "amenities": ["WiFi", "Ocean View", "Balcony", "AC"],
@@ -173,6 +179,7 @@ curl -X POST http://localhost:8000/v1.0/properties/prop-uuid-1/rooms \
     "type": "Villa",
     "description": "Private villa with infinity pool",
     "price_per_night": 420,
+    "currency_code": "UAH",
     "max_guests": 6,
     "bed_config": "1 King Bed + 2 Queen Beds",
     "amenities": ["WiFi", "Pool", "Beach Access", "Kitchen"],
@@ -232,6 +239,10 @@ curl -X PUT http://localhost:8000/v1.0/properties/prop-uuid-1/rooms/room-uuid-1/
 
 ## Bookings
 
+Notes:
+- `currency_code` is optional on create; when omitted it is inherited from the room (fallback `USD`).
+- Booking responses include `currency_code` and `currency_display`.
+
 ### GET /v1.0/properties/{property_id}/bookings — List bookings
 ```bash
 # All bookings
@@ -255,6 +266,8 @@ curl "http://localhost:8000/v1.0/properties/prop-uuid-1/bookings?status=confirme
       "check_in": "2026-03-15",
       "check_out": "2026-03-20",
       "total_price": 2100.0,
+      "currency_code": "USD",
+      "currency_display": "$",
       "status": "confirmed",
       "ai_handled": true,
       "source": "mcp",
@@ -279,6 +292,7 @@ curl -X POST http://localhost:8000/v1.0/properties/prop-uuid-1/bookings \
     "check_in": "2026-04-10",
     "check_out": "2026-04-15",
     "total_price": 1445,
+    "currency_code": "USD",
     "status": "confirmed",
     "ai_handled": true,
     "source": "mcp",
@@ -567,6 +581,7 @@ Notes:
 - `search_hotels` applies availability filtering only when both `check_in` and `check_out` are provided.
 - `search_hotels` treats `pet_friendly=true` as an amenities keyword filter (`pet friendly`, `pets allowed`, `pets welcome`, `pet-friendly`).
 - `search_hotels` applies `budget_total_max` only when `check_in` + `check_out` are provided.
+- Price-bearing tool responses include `currency_code` and `currency_display`.
 - `property_id` must be a valid UUID.
 - MCP-originated audit entries are stored with `source = "chatgpt"`.
 - MCP booking creation writes bookings with `status = "confirmed"` and `source = "chatgpt"`.

@@ -15,6 +15,8 @@ class GuestLatestBookingResponse(BaseModel):
     check_out: date
     status: str
     total_price: float
+    currency_code: str = "USD"
+    currency_display: str = "$"
     ai_handled: bool
     source: str | None = None
 
@@ -29,6 +31,8 @@ class GuestSummaryResponse(BaseModel):
     total_stays: int
     last_stay_date: date | None = None
     total_spent: float
+    total_spent_currency_code: str = "USD"
+    total_spent_currency_display: str = "$"
     latest_booking: GuestLatestBookingResponse | None = None
     created_at: datetime
     updated_at: datetime
@@ -44,6 +48,8 @@ class GuestBookingResponse(BaseModel):
     check_out: date
     status: str
     total_price: float
+    currency_code: str = "USD"
+    currency_display: str = "$"
     ai_handled: bool
     source: str | None = None
     conversation_id: str | None = None

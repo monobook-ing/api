@@ -17,6 +17,7 @@ class BookingCreate(BaseModel):
     ai_handled: bool = False
     source: str | None = None
     conversation_id: str | None = None
+    currency_code: str | None = Field(None, min_length=3, max_length=3)
 
 
 class BookingUpdate(BaseModel):
@@ -35,6 +36,8 @@ class BookingResponse(BaseModel):
     check_in: date
     check_out: date
     total_price: float
+    currency_code: str = "USD"
+    currency_display: str = "$"
     status: str
     ai_handled: bool
     source: str | None = None
