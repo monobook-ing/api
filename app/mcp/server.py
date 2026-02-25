@@ -224,6 +224,7 @@ def _render_widget_html(widget: str) -> str:
         "</div>"
         "</div>"
         f"<script id='monobook-widget-bootstrap' type='application/json'>{bootstrap}</script>"
+        "<script>window.process=window.process||{env:{NODE_ENV:'production'}}</script>"
         f"{script_tag}"
         "</body>"
         "</html>"
