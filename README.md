@@ -59,5 +59,32 @@ This starter does not bundle a migrations tool; initialize your database schema 
 ### MCP Integration Environment Variables
 
 - `MCP_SHARED_SECRET` (required for MCP access): shared key expected in `X-Monobook-MCP-Key`
-- `MCP_PUBLIC_BASE_URL` (optional): public API base URL used for widget CSP metadata
-- `CHATGPT_WIDGET_BASE_URL` (optional): public base URL serving widget assets (`/apps/chatgpt-widget.js` and `/apps/chatgpt-widget.css`)
+- `MCP_PUBLIC_BASE_URL` (optional): public API base URL used for widget CSP metadata and legacy widget asset fallback.
+- `CHATGPT_WIDGET_BASE_URL` (optional, legacy): base URL used to derive `/apps/chatgpt-widget.js` and `/apps/chatgpt-widget.css`.
+- `CHATGPT_WIDGET_JS_URL` (recommended): full public URL to widget JS bundle.
+- `CHATGPT_WIDGET_CSS_URL` (recommended): full public URL to widget CSS bundle.
+
+#### Recommended split-domain setup
+
+Use explicit full asset URLs when widget assets are hosted on a separate static domain:
+
+```env
+MCP_PUBLIC_BASE_URL=https://api.example.com
+CHATGPT_WIDGET_JS_URL=https://static.example.com/widgets/chatgpt-widget.js
+CHATGPT_WIDGET_CSS_URL=https://static.example.com/widgets/chatgpt-widget.css
+```
+
+#### Validation and startup behavior
+
+- `CHATGPT_WIDGET_JS_URL` and `CHATGPT_WIDGET_CSS_URL` must both be set together.
+- Public widget URLs must be absolute `http(s)` URLs.
+- Placeholder hosts (for example, `your-api-domain.com`) are rejected for explicit widget asset URLs.
+- On startup, when explicit widget URLs are configured, the API performs reachability checks (`HEAD`, then `GET` fallback).
+- If an explicit widget asset is unreachable or returns non-success, startup fails with a clear runtime error.
+
+#### Troubleshooting white widget frames in ChatGPT
+
+1. Verify the exact JS/CSS URLs load publicly in a browser (no auth required).
+2. Confirm `CHATGPT_WIDGET_JS_URL` and `CHATGPT_WIDGET_CSS_URL` match deployed paths exactly.
+3. Ensure `MCP_PUBLIC_BASE_URL` points to the publicly reachable API origin.
+4. Check API startup logs for widget asset validation errors.
