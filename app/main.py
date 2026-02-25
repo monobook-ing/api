@@ -121,15 +121,20 @@ async def validate_widget_runtime_assets() -> None:
         raise RuntimeError(f"Widget runtime asset validation failed: {details}")
 
 # Serve bundled ChatGPT widget assets from this API by default.
-# This avoids needing a separate static host for `/apps/chatgpt-widget.{js,css}` in common deployments.
+# Prefer the dedicated Apps SDK bundle to keep search widget UI consistent.
 repo_root = Path(__file__).resolve().parents[2]
-ui_dist = repo_root / "monobook" / "dist"
-ui_apps = ui_dist / "apps"
-ui_assets = ui_dist / "assets"
-if ui_apps.is_dir():
-    app.mount("/apps", StaticFiles(directory=str(ui_apps), html=False), name="apps")
-if ui_assets.is_dir():
-    app.mount("/assets", StaticFiles(directory=str(ui_assets), html=False), name="assets")
+widget_apps_candidates = [
+    repo_root / "apps-sdk" / "chatgpt" / "dist" / "apps",
+    repo_root / "monobook" / "dist" / "apps",
+]
+widget_apps_dir = next((path for path in widget_apps_candidates if path.is_dir()), None)
+if widget_apps_dir is not None:
+    app.mount("/apps", StaticFiles(directory=str(widget_apps_dir), html=False), name="apps")
+
+# Keep legacy `/assets/*` support for older bundles that still reference it directly.
+legacy_ui_assets = repo_root / "monobook" / "dist" / "assets"
+if legacy_ui_assets.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(legacy_ui_assets), html=False), name="assets")
 
 # Add CORS middleware
 app.add_middleware(
