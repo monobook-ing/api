@@ -553,12 +553,20 @@ Required header:
 
 Exposed tools:
 
+- `search_hotels(query?, property_name?, city?, country?, room_name?, lat?, lng?, radius_km=20, check_in?, check_out?, guests?, pet_friendly?, budget_per_night_max?, budget_total_max?)`
 - `search_rooms(property_id, query, check_in?, check_out?, guests?)`
 - `check_availability(property_id, room_id, check_in, check_out)`
 - `create_booking(property_id, room_id, guest_name, guest_email?, check_in, check_out, guests?)`
 
 Notes:
 
+- `search_hotels` applies all provided filters with AND logic and returns hotel-level results with nested `matching_rooms`.
+- For `search_hotels`, at least one of `query`, `property_name`, `city`, `country`, `room_name`, or `lat/lng` is required.
+- `search_hotels` requires `lat` and `lng` together.
+- `search_hotels` validates `guests` with the same limits as booking tools.
+- `search_hotels` applies availability filtering only when both `check_in` and `check_out` are provided.
+- `search_hotels` treats `pet_friendly=true` as an amenities keyword filter (`pet friendly`, `pets allowed`, `pets welcome`, `pet-friendly`).
+- `search_hotels` applies `budget_total_max` only when `check_in` + `check_out` are provided.
 - `property_id` must be a valid UUID.
 - MCP-originated audit entries are stored with `source = "chatgpt"`.
 - MCP booking creation writes bookings with `status = "confirmed"` and `source = "chatgpt"`.

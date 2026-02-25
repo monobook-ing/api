@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+import math
+from datetime import date, timedelta
 from typing import Any
 
 from supabase import Client
@@ -20,6 +21,148 @@ from app.crud.property import get_property_by_id
 from app.services.embedding import search_similar
 
 logger = logging.getLogger(__name__)
+
+PET_FRIENDLY_KEYWORDS = (
+    "pet friendly",
+    "pets allowed",
+    "pets welcome",
+    "pet-friendly",
+)
+TAX_RATE = 0.12
+SERVICE_FEE_RATE = 0.04
+
+
+def _to_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _contains_ci(value: Any, term: str) -> bool:
+    if value is None:
+        return False
+    return term in str(value).lower()
+
+
+def _property_name_from_row(row: dict[str, Any]) -> str:
+    account = row.get("accounts")
+    if isinstance(account, list):
+        account = account[0] if account else {}
+    if isinstance(account, dict):
+        return str(account.get("name", "")).strip()
+    return ""
+
+
+def _room_is_pet_friendly(amenities: list[str] | None) -> bool:
+    if not amenities:
+        return False
+    normalized = [str(amenity).lower() for amenity in amenities]
+    return any(
+        any(keyword in amenity for keyword in PET_FRIENDLY_KEYWORDS)
+        for amenity in normalized
+    )
+
+
+def _haversine_distance_km(
+    origin_lat: float,
+    origin_lng: float,
+    target_lat: float,
+    target_lng: float,
+) -> float:
+    earth_radius_km = 6371.0
+    d_lat = math.radians(target_lat - origin_lat)
+    d_lng = math.radians(target_lng - origin_lng)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(origin_lat))
+        * math.cos(math.radians(target_lat))
+        * math.sin(d_lng / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return earth_radius_km * c
+
+
+async def _filter_available_rooms(
+    client: Client,
+    rooms: list[dict[str, Any]],
+    check_in: str,
+    check_out: str,
+) -> list[dict[str, Any]]:
+    if not rooms:
+        return []
+
+    room_ids = [room["id"] for room in rooms]
+    conflicts = (
+        client.table("bookings")
+        .select("room_id")
+        .in_("room_id", room_ids)
+        .neq("status", "cancelled")
+        .lt("check_in", check_out)
+        .gt("check_out", check_in)
+        .execute()
+    )
+    conflict_room_ids = {entry["room_id"] for entry in conflicts.data or []}
+    return [room for room in rooms if room["id"] not in conflict_room_ids]
+
+
+def _nightly_rate_for_guests(
+    room: dict[str, Any],
+    guests: int | None,
+    guest_tiers: list[dict[str, Any]],
+) -> float:
+    base_rate = _to_float(room.get("price_per_night"))
+    if guests is None:
+        return base_rate
+
+    for tier in guest_tiers:
+        min_guests = int(tier.get("min_guests", 1))
+        max_guests = int(tier.get("max_guests", 1))
+        if min_guests <= guests <= max_guests:
+            return _to_float(tier.get("price_per_night"))
+    return base_rate
+
+
+def _calculate_room_total_price(
+    room: dict[str, Any],
+    guests: int | None,
+    check_in: str,
+    check_out: str,
+    guest_tiers: list[dict[str, Any]],
+    date_overrides: list[dict[str, Any]],
+) -> float:
+    check_in_date = date.fromisoformat(check_in)
+    check_out_date = date.fromisoformat(check_out)
+    nights = (check_out_date - check_in_date).days
+    nightly_rate = _nightly_rate_for_guests(room, guests, guest_tiers)
+
+    override_map = {
+        str(override["date"]): _to_float(override["price"])
+        for override in date_overrides
+    }
+
+    subtotal = 0.0
+    for i in range(nights):
+        current_day = check_in_date + timedelta(days=i)
+        current_key = current_day.isoformat()
+        subtotal += override_map.get(current_key, nightly_rate)
+
+    taxes = round(subtotal * TAX_RATE, 2)
+    service_fee = round(subtotal * SERVICE_FEE_RATE, 2)
+    return round(subtotal + taxes + service_fee, 2)
+
+
+def _empty_hotel_search_result(
+    applied_filters: dict[str, Any],
+    message: str,
+) -> dict[str, Any]:
+    return {
+        "hotels": [],
+        "count_hotels": 0,
+        "count_rooms": 0,
+        "applied_filters": applied_filters,
+        "message": message,
+    }
 
 
 async def log_tool_call(
@@ -149,6 +292,373 @@ async def search_rooms(
             for r in rooms
         ],
         "count": len(rooms),
+    }
+
+
+async def search_hotels(
+    client: Client,
+    query: str = "",
+    property_name: str | None = None,
+    city: str | None = None,
+    country: str | None = None,
+    room_name: str | None = None,
+    lat: float | None = None,
+    lng: float | None = None,
+    radius_km: float = 20.0,
+    check_in: str | None = None,
+    check_out: str | None = None,
+    guests: int | None = None,
+    pet_friendly: bool | None = None,
+    budget_per_night_max: float | None = None,
+    budget_total_max: float | None = None,
+    session_id: str | None = None,
+    source: str = "widget",
+) -> dict[str, Any]:
+    normalized_query = (query or "").strip().lower()
+    normalized_property_name = (property_name or "").strip().lower()
+    normalized_city = (city or "").strip().lower()
+    normalized_country = (country or "").strip().lower()
+    normalized_room_name = (room_name or "").strip().lower()
+
+    has_coordinate_pair = lat is not None and lng is not None
+    if (lat is None) != (lng is None):
+        return {"error": "Both lat and lng must be provided together."}
+    if radius_km <= 0:
+        return {"error": "radius_km must be greater than 0."}
+
+    has_primary_criteria = any(
+        (
+            normalized_query,
+            normalized_property_name,
+            normalized_city,
+            normalized_country,
+            normalized_room_name,
+            has_coordinate_pair,
+        )
+    )
+    if not has_primary_criteria:
+        return {
+            "error": (
+                "At least one search criterion is required: query, property_name, city, "
+                "country, room_name, or lat/lng."
+            )
+        }
+
+    if (check_in and not check_out) or (check_out and not check_in):
+        return {"error": "Both check_in and check_out must be provided together."}
+
+    if check_in and check_out:
+        date_error = validate_dates(check_in, check_out)
+        if date_error:
+            return {"error": date_error}
+
+    if guests is not None:
+        guest_error = validate_guests(guests)
+        if guest_error:
+            return {"error": guest_error}
+
+    if budget_per_night_max is not None and budget_per_night_max <= 0:
+        return {"error": "budget_per_night_max must be greater than 0."}
+
+    if budget_total_max is not None and budget_total_max <= 0:
+        return {"error": "budget_total_max must be greater than 0."}
+
+    if budget_total_max is not None and not (check_in and check_out):
+        return {
+            "error": "budget_total_max requires both check_in and check_out dates."
+        }
+
+    applied_filters: dict[str, Any] = {}
+    if normalized_query:
+        applied_filters["query"] = query.strip()
+    if normalized_property_name:
+        applied_filters["property_name"] = property_name
+    if normalized_city:
+        applied_filters["city"] = city
+    if normalized_country:
+        applied_filters["country"] = country
+    if normalized_room_name:
+        applied_filters["room_name"] = room_name
+    if has_coordinate_pair:
+        applied_filters["lat"] = lat
+        applied_filters["lng"] = lng
+        applied_filters["radius_km"] = radius_km
+    if check_in and check_out:
+        applied_filters["check_in"] = check_in
+        applied_filters["check_out"] = check_out
+    if guests is not None:
+        applied_filters["guests"] = guests
+    if pet_friendly is not None:
+        applied_filters["pet_friendly"] = pet_friendly
+    if budget_per_night_max is not None:
+        applied_filters["budget_per_night_max"] = budget_per_night_max
+    if budget_total_max is not None:
+        applied_filters["budget_total_max"] = budget_total_max
+
+    properties_response = (
+        client.table("properties")
+        .select("id, city, country, lat, lng, description, accounts!inner(name)")
+        .execute()
+    )
+    properties_raw = properties_response.data or []
+
+    properties: dict[str, dict[str, Any]] = {}
+    for row in properties_raw:
+        pid = str(row["id"])
+        prop_name = _property_name_from_row(row)
+        prop_city = row.get("city")
+        prop_country = row.get("country")
+        prop_description = row.get("description")
+        prop_lat = row.get("lat")
+        prop_lng = row.get("lng")
+
+        if normalized_property_name and not _contains_ci(prop_name, normalized_property_name):
+            continue
+        if normalized_city and not _contains_ci(prop_city, normalized_city):
+            continue
+        if normalized_country and not _contains_ci(prop_country, normalized_country):
+            continue
+
+        distance_km: float | None = None
+        if has_coordinate_pair:
+            if prop_lat is None or prop_lng is None:
+                continue
+            distance_km = _haversine_distance_km(
+                float(lat),
+                float(lng),
+                float(prop_lat),
+                float(prop_lng),
+            )
+            if distance_km > radius_km:
+                continue
+
+        properties[pid] = {
+            "property_id": pid,
+            "property_name": prop_name,
+            "city": prop_city,
+            "country": prop_country,
+            "lat": prop_lat,
+            "lng": prop_lng,
+            "description": prop_description,
+            "distance_km": round(distance_km, 3) if distance_km is not None else None,
+        }
+
+    if not properties:
+        return _empty_hotel_search_result(
+            applied_filters,
+            "No hotels matched the provided filters.",
+        )
+
+    rooms_response = (
+        client.table("rooms")
+        .select(
+            "id, property_id, name, type, description, price_per_night, "
+            "max_guests, amenities, images"
+        )
+        .in_("property_id", list(properties.keys()))
+        .eq("status", "active")
+        .execute()
+    )
+    rooms = rooms_response.data or []
+
+    if normalized_room_name:
+        rooms = [
+            room for room in rooms
+            if _contains_ci(room.get("name"), normalized_room_name)
+            or _contains_ci(room.get("type"), normalized_room_name)
+        ]
+
+    if guests is not None:
+        rooms = [
+            room for room in rooms
+            if int(room.get("max_guests", 0)) >= guests
+        ]
+
+    if pet_friendly:
+        rooms = [
+            room for room in rooms
+            if _room_is_pet_friendly(room.get("amenities"))
+        ]
+
+    if budget_per_night_max is not None:
+        rooms = [
+            room
+            for room in rooms
+            if _to_float(room.get("price_per_night")) <= budget_per_night_max
+        ]
+
+    if check_in and check_out:
+        rooms = await _filter_available_rooms(client, rooms, check_in, check_out)
+
+    room_total_map: dict[str, float] = {}
+    if rooms and check_in and check_out and budget_total_max is not None:
+        room_ids = [room["id"] for room in rooms]
+
+        guest_tiers_response = (
+            client.table("room_guest_tiers")
+            .select("room_id, min_guests, max_guests, price_per_night")
+            .in_("room_id", room_ids)
+            .execute()
+        )
+        guest_tiers_by_room: dict[str, list[dict[str, Any]]] = {rid: [] for rid in room_ids}
+        for tier in guest_tiers_response.data or []:
+            room_id = str(tier["room_id"])
+            guest_tiers_by_room.setdefault(room_id, []).append(tier)
+
+        date_overrides_response = (
+            client.table("room_date_pricing")
+            .select("room_id, date, price")
+            .in_("room_id", room_ids)
+            .gte("date", check_in)
+            .lt("date", check_out)
+            .execute()
+        )
+        date_overrides_by_room: dict[str, list[dict[str, Any]]] = {rid: [] for rid in room_ids}
+        for override in date_overrides_response.data or []:
+            room_id = str(override["room_id"])
+            date_overrides_by_room.setdefault(room_id, []).append(override)
+
+        budget_filtered_rooms: list[dict[str, Any]] = []
+        for room in rooms:
+            total_price = _calculate_room_total_price(
+                room,
+                guests,
+                check_in,
+                check_out,
+                guest_tiers_by_room.get(str(room["id"]), []),
+                date_overrides_by_room.get(str(room["id"]), []),
+            )
+            room_total_map[str(room["id"])] = total_price
+            if total_price <= budget_total_max:
+                budget_filtered_rooms.append(room)
+        rooms = budget_filtered_rooms
+
+    if normalized_query:
+        query_filtered_rooms: list[dict[str, Any]] = []
+        for room in rooms:
+            pid = str(room["property_id"])
+            prop = properties.get(pid)
+            if not prop:
+                continue
+
+            room_match = any(
+                (
+                    _contains_ci(room.get("name"), normalized_query),
+                    _contains_ci(room.get("type"), normalized_query),
+                    _contains_ci(room.get("description"), normalized_query),
+                    any(
+                        _contains_ci(amenity, normalized_query)
+                        for amenity in (room.get("amenities") or [])
+                    ),
+                )
+            )
+            property_match = any(
+                (
+                    _contains_ci(prop.get("property_name"), normalized_query),
+                    _contains_ci(prop.get("description"), normalized_query),
+                    _contains_ci(prop.get("city"), normalized_query),
+                    _contains_ci(prop.get("country"), normalized_query),
+                )
+            )
+            if room_match or property_match:
+                query_filtered_rooms.append(room)
+        rooms = query_filtered_rooms
+
+    rooms_by_property: dict[str, list[dict[str, Any]]] = {}
+    for room in rooms:
+        pid = str(room["property_id"])
+        if pid not in properties:
+            continue
+        rooms_by_property.setdefault(pid, []).append(room)
+
+    hotels: list[dict[str, Any]] = []
+    for pid, property_rooms in rooms_by_property.items():
+        prop = properties[pid]
+        sorted_rooms = sorted(
+            property_rooms,
+            key=lambda item: _to_float(item.get("price_per_night")),
+        )
+        matching_rooms = []
+        for room in sorted_rooms:
+            room_entry: dict[str, Any] = {
+                "id": room["id"],
+                "property_id": room["property_id"],
+                "name": room["name"],
+                "type": room["type"],
+                "description": room.get("description", ""),
+                "price_per_night": _to_float(room.get("price_per_night")),
+                "max_guests": int(room.get("max_guests", 0)),
+                "amenities": room.get("amenities", []),
+                "images": room.get("images", []),
+            }
+            room_id = str(room["id"])
+            if room_id in room_total_map:
+                room_entry["estimated_total_price"] = room_total_map[room_id]
+            matching_rooms.append(room_entry)
+
+        min_price_per_night = min(
+            _to_float(room.get("price_per_night")) for room in property_rooms
+        )
+        hotels.append(
+            {
+                "property_id": prop["property_id"],
+                "property_name": prop["property_name"],
+                "city": prop["city"],
+                "country": prop["country"],
+                "lat": prop["lat"],
+                "lng": prop["lng"],
+                "distance_km": prop["distance_km"],
+                "min_price_per_night": round(min_price_per_night, 2),
+                "available_rooms_count": len(matching_rooms),
+                "pet_friendly_option": any(
+                    _room_is_pet_friendly(room.get("amenities"))
+                    for room in property_rooms
+                ),
+                "matching_rooms": matching_rooms,
+            }
+        )
+
+    if has_coordinate_pair:
+        hotels.sort(
+            key=lambda hotel: (
+                hotel["distance_km"] if hotel["distance_km"] is not None else float("inf"),
+                hotel["property_name"].lower(),
+            )
+        )
+    else:
+        hotels.sort(key=lambda hotel: hotel["property_name"].lower())
+
+    count_hotels = len(hotels)
+    count_rooms = sum(len(hotel["matching_rooms"]) for hotel in hotels)
+    message = (
+        f"Found {count_hotels} hotel(s) with {count_rooms} matching room(s)."
+        if count_hotels > 0
+        else "No hotels matched the provided filters."
+    )
+
+    if hotels:
+        for hotel in hotels:
+            await log_tool_call(
+                client=client,
+                property_id=hotel["property_id"],
+                session_id=session_id,
+                tool_name="search_hotels",
+                description=f"Cross-property hotel search: '{query or room_name or city or country or property_name or 'filters'}'",
+                status="success",
+                source=source,
+                request_payload=applied_filters,
+                response_payload={
+                    "count_hotels": count_hotels,
+                    "count_rooms": count_rooms,
+                },
+            )
+
+    return {
+        "hotels": hotels,
+        "count_hotels": count_hotels,
+        "count_rooms": count_rooms,
+        "applied_filters": applied_filters,
+        "message": message,
     }
 
 
