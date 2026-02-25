@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from supabase import Client
 
+from app.crud.currency import (
+    get_currency_display_map,
+    normalize_currency_code,
+    resolve_currency_display,
+)
+
 
 async def get_rooms_by_property(client: Client, property_id: str) -> list[dict]:
     response = (
@@ -12,7 +18,15 @@ async def get_rooms_by_property(client: Client, property_id: str) -> list[dict]:
         .execute()
     )
     rooms = response.data or []
+    currency_display_map = await get_currency_display_map(
+        client, [room.get("currency_code") for room in rooms]
+    )
     for room in rooms:
+        currency_code = normalize_currency_code(room.get("currency_code"))
+        room["currency_code"] = currency_code
+        room["currency_display"] = resolve_currency_display(
+            currency_code, currency_display_map
+        )
         room["guest_tiers"] = await _get_guest_tiers(client, room["id"])
         room["date_overrides"] = await _get_date_overrides(client, room["id"])
     return rooms
@@ -23,22 +37,34 @@ async def get_room_by_id(client: Client, room_id: str) -> dict | None:
     if not response.data:
         return None
     room = response.data[0]
+    currency_code = normalize_currency_code(room.get("currency_code"))
+    room["currency_code"] = currency_code
+    currency_display_map = await get_currency_display_map(client, [currency_code])
+    room["currency_display"] = resolve_currency_display(
+        currency_code, currency_display_map
+    )
     room["guest_tiers"] = await _get_guest_tiers(client, room_id)
     room["date_overrides"] = await _get_date_overrides(client, room_id)
     return room
 
 
 async def create_room(client: Client, property_id: str, data: dict) -> dict:
-    row = {**data, "property_id": property_id}
+    row = {
+        **data,
+        "property_id": property_id,
+        "currency_code": normalize_currency_code(data.get("currency_code")),
+    }
     response = client.table("rooms").insert(row).execute()
-    room = response.data[0]
-    room["guest_tiers"] = []
-    room["date_overrides"] = []
-    return room
+    room = response.data[0] if response.data else None
+    if not room:
+        return {}
+    return await get_room_by_id(client, room["id"]) or {}
 
 
 async def update_room(client: Client, room_id: str, data: dict) -> dict | None:
     filtered = {k: v for k, v in data.items() if v is not None}
+    if "currency_code" in filtered:
+        filtered["currency_code"] = normalize_currency_code(filtered.get("currency_code"))
     if filtered:
         client.table("rooms").update(filtered).eq("id", room_id).execute()
     return await get_room_by_id(client, room_id)

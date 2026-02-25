@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from datetime import date, timedelta
 from typing import Any
 
@@ -17,6 +18,11 @@ from supabase import Client
 from app.agents.guardrails import validate_dates, validate_guests
 from app.crud.booking import create_booking, get_booking_by_id, get_or_create_guest
 from app.crud.chat import link_session_to_guest
+from app.crud.currency import (
+    get_currency_display_map,
+    normalize_currency_code,
+    resolve_currency_display,
+)
 from app.crud.property import get_property_by_id
 from app.services.embedding import search_similar
 
@@ -30,6 +36,7 @@ PET_FRIENDLY_KEYWORDS = (
 )
 TAX_RATE = 0.12
 SERVICE_FEE_RATE = 0.04
+_CURRENCY_ALPHA_PATTERN = re.compile(r"[A-Za-z]")
 
 
 def _to_float(value: Any) -> float:
@@ -43,6 +50,17 @@ def _contains_ci(value: Any, term: str) -> bool:
     if value is None:
         return False
     return term in str(value).lower()
+
+
+def _is_symbol_currency_display(currency_display: str) -> bool:
+    return _CURRENCY_ALPHA_PATTERN.search(currency_display) is None
+
+
+def _format_price_for_log(amount: float, currency_display: str) -> str:
+    formatted = f"{amount:.2f}"
+    if _is_symbol_currency_display(currency_display):
+        return f"{currency_display}{formatted}"
+    return f"{formatted} {currency_display}"
 
 
 def _property_name_from_row(row: dict[str, Any]) -> str:
@@ -265,6 +283,9 @@ async def search_rooms(
     # Fetch property name for display
     prop = await get_property_by_id(client, property_id)
     property_name = prop.get("name", "") if prop else ""
+    currency_display_map = await get_currency_display_map(
+        client, [room.get("currency_code") for room in rooms]
+    )
 
     await log_tool_call(
         client, property_id, session_id, "search_rooms",
@@ -285,6 +306,11 @@ async def search_rooms(
                 "type": r["type"],
                 "description": r.get("description", ""),
                 "price_per_night": str(r["price_per_night"]),
+                "currency_code": normalize_currency_code(r.get("currency_code")),
+                "currency_display": resolve_currency_display(
+                    normalize_currency_code(r.get("currency_code")),
+                    currency_display_map,
+                ),
                 "max_guests": r["max_guests"],
                 "amenities": r.get("amenities", []),
                 "images": r.get("images", []),
@@ -453,7 +479,7 @@ async def search_hotels(
         client.table("rooms")
         .select(
             "id, property_id, name, type, description, price_per_night, "
-            "max_guests, amenities, images"
+            "currency_code, max_guests, amenities, images"
         )
         .in_("property_id", list(properties.keys()))
         .eq("status", "active")
@@ -489,6 +515,10 @@ async def search_hotels(
 
     if check_in and check_out:
         rooms = await _filter_available_rooms(client, rooms, check_in, check_out)
+
+    currency_display_map = await get_currency_display_map(
+        client, [room.get("currency_code") for room in rooms]
+    )
 
     room_total_map: dict[str, float] = {}
     if rooms and check_in and check_out and budget_total_max is not None:
@@ -580,6 +610,10 @@ async def search_hotels(
         )
         matching_rooms = []
         for room in sorted_rooms:
+            room_currency_code = normalize_currency_code(room.get("currency_code"))
+            room_currency_display = resolve_currency_display(
+                room_currency_code, currency_display_map
+            )
             room_entry: dict[str, Any] = {
                 "id": room["id"],
                 "property_id": room["property_id"],
@@ -587,6 +621,8 @@ async def search_hotels(
                 "type": room["type"],
                 "description": room.get("description", ""),
                 "price_per_night": _to_float(room.get("price_per_night")),
+                "currency_code": room_currency_code,
+                "currency_display": room_currency_display,
                 "max_guests": int(room.get("max_guests", 0)),
                 "amenities": room.get("amenities", []),
                 "images": room.get("images", []),
@@ -594,10 +630,18 @@ async def search_hotels(
             room_id = str(room["id"])
             if room_id in room_total_map:
                 room_entry["estimated_total_price"] = room_total_map[room_id]
+                room_entry["estimated_total_price_currency_code"] = room_currency_code
+                room_entry["estimated_total_price_currency_display"] = room_currency_display
             matching_rooms.append(room_entry)
 
         min_price_per_night = min(
             _to_float(room.get("price_per_night")) for room in property_rooms
+        )
+        min_price_currency_code = normalize_currency_code(
+            property_rooms[0].get("currency_code")
+        )
+        min_price_currency_display = resolve_currency_display(
+            min_price_currency_code, currency_display_map
         )
         hotels.append(
             {
@@ -609,6 +653,8 @@ async def search_hotels(
                 "lng": prop["lng"],
                 "distance_km": prop["distance_km"],
                 "min_price_per_night": round(min_price_per_night, 2),
+                "min_price_currency_code": min_price_currency_code,
+                "min_price_currency_display": min_price_currency_display,
                 "available_rooms_count": len(matching_rooms),
                 "pet_friendly_option": any(
                     _room_is_pet_friendly(room.get("amenities"))
@@ -725,6 +771,9 @@ async def get_room_details(
         return {"error": "Room not found"}
 
     r = room.data
+    currency_code = normalize_currency_code(r.get("currency_code"))
+    currency_display_map = await get_currency_display_map(client, [currency_code])
+    currency_display = resolve_currency_display(currency_code, currency_display_map)
 
     # Get pricing tiers
     tiers = (
@@ -747,6 +796,8 @@ async def get_room_details(
         "type": r["type"],
         "description": r.get("description", ""),
         "price_per_night": str(r["price_per_night"]),
+        "currency_code": currency_code,
+        "currency_display": currency_display,
         "max_guests": r["max_guests"],
         "bed_config": r.get("bed_config", ""),
         "amenities": r.get("amenities", []),
@@ -756,6 +807,8 @@ async def get_room_details(
                 "min_guests": t["min_guests"],
                 "max_guests": t["max_guests"],
                 "price_per_night": str(t["price_per_night"]),
+                "currency_code": currency_code,
+                "currency_display": currency_display,
             }
             for t in tiers.data or []
         ],
@@ -868,7 +921,7 @@ async def calculate_price(
     # Get base room price
     room = (
         client.table("rooms")
-        .select("price_per_night, max_guests, name")
+        .select("price_per_night, currency_code, max_guests, name")
         .eq("id", room_id)
         .single()
         .execute()
@@ -928,10 +981,15 @@ async def calculate_price(
 
     taxes = round(total * 0.12, 2)
     service_fee = round(total * 0.04, 2)
+    currency_code = normalize_currency_code(room.data.get("currency_code"))
+    currency_display_map = await get_currency_display_map(client, [currency_code])
+    currency_display = resolve_currency_display(currency_code, currency_display_map)
+    total_with_fees = round(total + taxes + service_fee, 2)
 
     await log_tool_call(
         client, property_id, session_id, "calculate_price",
-        f"Calculated price for {room.data['name']}: ${total + taxes + service_fee:.2f}",
+        f"Calculated price for {room.data['name']}: "
+        f"{_format_price_for_log(total_with_fees, currency_display)}",
         "success",
         source,
     )
@@ -944,8 +1002,10 @@ async def calculate_price(
         "subtotal": total,
         "taxes": taxes,
         "service_fee": service_fee,
-        "total": round(total + taxes + service_fee, 2),
-        "currency": "USD",
+        "total": total_with_fees,
+        "currency": currency_code,
+        "currency_code": currency_code,
+        "currency_display": currency_display,
     }
 
 
@@ -1011,6 +1071,7 @@ async def tool_create_booking(
         "check_in": check_in,
         "check_out": check_out,
         "total_price": pricing["total"],
+        "currency_code": pricing["currency_code"],
         "status": booking_status,
         "ai_handled": True,
         "source": source,
@@ -1036,7 +1097,9 @@ async def tool_create_booking(
         "check_out": check_out,
         "nights": pricing["nights"],
         "total": pricing["total"],
-        "currency": "USD",
+        "currency": pricing["currency"],
+        "currency_code": pricing["currency_code"],
+        "currency_display": pricing["currency_display"],
         "message": f"Booking created successfully! Confirmation ID: {booking['id'][:8].upper()}",
     }
 
@@ -1068,4 +1131,7 @@ async def tool_get_booking_status(
         "check_in": booking["check_in"],
         "check_out": booking["check_out"],
         "total_price": str(booking["total_price"]),
+        "currency": booking["currency_code"],
+        "currency_code": booking["currency_code"],
+        "currency_display": booking["currency_display"],
     }
