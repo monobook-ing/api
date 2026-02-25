@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import AbstractAsyncContextManager
 from html import escape
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
@@ -30,6 +32,11 @@ SEARCH_WIDGET_URI = "ui://widget/search-rooms.html"
 HOTELS_WIDGET_URI = "ui://widget/search-hotels.html"
 AVAILABILITY_WIDGET_URI = "ui://widget/check-availability.html"
 BOOKING_WIDGET_URI = "ui://widget/booking-confirmation.html"
+
+logger = logging.getLogger(__name__)
+
+_cached_widget_js: str | None = None
+_cached_widget_css: str | None = None
 
 
 def _origin(url: str | None) -> str | None:
@@ -129,6 +136,60 @@ def get_widget_asset_urls() -> tuple[str | None, str | None]:
     return _widget_assets()
 
 
+def _inline_tag_safe(content: str, tag: str) -> str:
+    closing = f"</{tag}"
+    return content.replace(closing, f"<\\/{tag}")
+
+
+async def _refresh_widget_asset_cache() -> None:
+    global _cached_widget_js, _cached_widget_css
+
+    css_url, script_url = _widget_assets()
+    if not css_url or not script_url:
+        _cached_widget_css = None
+        _cached_widget_js = None
+        return
+
+    if not (
+        css_url.startswith(("http://", "https://"))
+        and script_url.startswith(("http://", "https://"))
+    ):
+        _cached_widget_css = None
+        _cached_widget_js = None
+        logger.info(
+            "Skipping widget asset prefetch: expected absolute HTTP(S) URLs, got css=%s js=%s",
+            css_url,
+            script_url,
+        )
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            css_response = await client.get(css_url, follow_redirects=True)
+            css_response.raise_for_status()
+
+            js_response = await client.get(script_url, follow_redirects=True)
+            js_response.raise_for_status()
+
+        _cached_widget_css = css_response.text
+        _cached_widget_js = js_response.text
+        logger.info(
+            "Loaded widget assets into inline cache (css=%d bytes, js=%d bytes).",
+            len(_cached_widget_css),
+            len(_cached_widget_js),
+        )
+    except Exception as exc:
+        _cached_widget_css = None
+        _cached_widget_js = None
+        logger.warning(
+            "Failed to prefetch widget assets for inlining; "
+            "falling back to external references. css=%s js=%s error=%s",
+            css_url,
+            script_url,
+            exc,
+        )
+
+
 def _render_widget_html(widget: str) -> str:
     css_url, script_url = _widget_assets()
     bootstrap = escape(json.dumps({"widget": widget}))
@@ -140,7 +201,13 @@ def _render_widget_html(widget: str) -> str:
             "</div></body></html>"
         )
 
-    css_tag = f"<link rel='stylesheet' href='{escape(css_url)}' />" if css_url else ""
+    if _cached_widget_js is not None and _cached_widget_css is not None:
+        css_tag = f"<style>{_inline_tag_safe(_cached_widget_css, 'style')}</style>"
+        script_tag = f"<script>{_inline_tag_safe(_cached_widget_js, 'script')}</script>"
+    else:
+        css_tag = f"<link rel='stylesheet' href='{escape(css_url)}' />" if css_url else ""
+        script_tag = f"<script type='module' src='{escape(script_url)}'></script>"
+
     return (
         "<!doctype html>"
         "<html>"
@@ -157,7 +224,7 @@ def _render_widget_html(widget: str) -> str:
         "</div>"
         "</div>"
         f"<script id='monobook-widget-bootstrap' type='application/json'>{bootstrap}</script>"
-        f"<script type='module' src='{escape(script_url)}'></script>"
+        f"{script_tag}"
         "</body>"
         "</html>"
     )
@@ -527,6 +594,7 @@ async def startup_mcp() -> None:
     if _mcp_lifespan is not None:
         return
 
+    await _refresh_widget_asset_cache()
     get_mcp_asgi_app()
     _mcp_lifespan = mcp_server.session_manager.run()
     await _mcp_lifespan.__aenter__()
