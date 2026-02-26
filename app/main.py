@@ -121,20 +121,11 @@ async def validate_widget_runtime_assets() -> None:
         raise RuntimeError(f"Widget runtime asset validation failed: {details}")
 
 # Serve bundled ChatGPT widget assets from this API by default.
-# Prefer the dedicated Apps SDK bundle to keep search widget UI consistent.
+# Serve only the dedicated Apps SDK bundle.
 repo_root = Path(__file__).resolve().parents[2]
-widget_apps_candidates = [
-    repo_root / "apps-sdk" / "chatgpt" / "dist" / "apps",
-    repo_root / "monobook" / "dist" / "apps",
-]
-widget_apps_dir = next((path for path in widget_apps_candidates if path.is_dir()), None)
-if widget_apps_dir is not None:
+widget_apps_dir = repo_root / "apps-sdk" / "chatgpt" / "dist" / "apps"
+if widget_apps_dir.is_dir():
     app.mount("/apps", StaticFiles(directory=str(widget_apps_dir), html=False), name="apps")
-
-# Keep legacy `/assets/*` support for older bundles that still reference it directly.
-legacy_ui_assets = repo_root / "monobook" / "dist" / "assets"
-if legacy_ui_assets.is_dir():
-    app.mount("/assets", StaticFiles(directory=str(legacy_ui_assets), html=False), name="assets")
 
 # Add CORS middleware
 app.add_middleware(
