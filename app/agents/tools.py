@@ -1058,6 +1058,20 @@ async def tool_create_booking(
     if "error" in pricing:
         return pricing
 
+    # Fetch room metadata for widget display
+    room_response = (
+        client.table("rooms")
+        .select("name, type, description, images, amenities, max_guests, bed_config")
+        .eq("id", room_id)
+        .eq("property_id", property_id)
+        .single()
+        .execute()
+    )
+    room_data = room_response.data or {}
+
+    prop = await get_property_by_id(client, property_id)
+    property_name = prop.get("name", "") if prop else ""
+
     # Get or create guest
     guest_id = await get_or_create_guest(client, property_id, guest_name, guest_email)
     if session_id:
@@ -1092,10 +1106,24 @@ async def tool_create_booking(
         "booking_id": booking["id"],
         "status": booking_status,
         "guest_name": guest_name,
+        "guests": guests,
         "room_id": room_id,
+        "room_name": room_data.get("name", pricing.get("room_name", "")),
+        "room_type": room_data.get("type", ""),
+        "room_description": room_data.get("description", ""),
+        "room_images": room_data.get("images", []),
+        "amenities": room_data.get("amenities", []),
+        "max_guests": room_data.get("max_guests"),
+        "bed_config": room_data.get("bed_config", ""),
+        "property_id": property_id,
+        "property_name": property_name,
         "check_in": check_in,
         "check_out": check_out,
         "nights": pricing["nights"],
+        "nightly_rate": pricing["nightly_rate"],
+        "subtotal": pricing["subtotal"],
+        "taxes": pricing["taxes"],
+        "service_fee": pricing["service_fee"],
         "total": pricing["total"],
         "currency": pricing["currency"],
         "currency_code": pricing["currency_code"],
