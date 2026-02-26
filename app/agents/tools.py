@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import re
+import uuid as _uuid
 from datetime import date, timedelta
 from typing import Any
 
@@ -37,6 +38,17 @@ PET_FRIENDLY_KEYWORDS = (
 TAX_RATE = 0.12
 SERVICE_FEE_RATE = 0.04
 _CURRENCY_ALPHA_PATTERN = re.compile(r"[A-Za-z]")
+
+
+def _is_valid_uuid(value: str | None) -> bool:
+    """Check if a string is a valid UUID (v1-v5)."""
+    if not value:
+        return False
+    try:
+        _uuid.UUID(value)
+        return True
+    except (ValueError, AttributeError):
+        return False
 
 
 def _to_float(value: Any) -> float:
@@ -318,6 +330,9 @@ async def search_rooms(
             for r in rooms
         ],
         "count": len(rooms),
+        "check_in": check_in,
+        "check_out": check_out,
+        "guests": guests,
     }
 
 
@@ -1074,7 +1089,7 @@ async def tool_create_booking(
 
     # Get or create guest
     guest_id = await get_or_create_guest(client, property_id, guest_name, guest_email)
-    if session_id:
+    if _is_valid_uuid(session_id):
         await link_session_to_guest(client, property_id, session_id, guest_id)
 
     # Create booking
