@@ -31,3 +31,25 @@ async def delete_knowledge_file(client: Client, file_id: str, user_id: str) -> b
         .execute()
     )
     return bool(response.data)
+
+
+async def get_next_pending_file(client: Client) -> dict | None:
+    """Claim and return the next pending knowledge file for indexing."""
+    try:
+        response = client.rpc("claim_next_pending_knowledge_file").execute()
+        rows = response.data or []
+        return rows[0] if rows else None
+    except Exception:
+        # Fallback path when migration has not been applied yet.
+        response = (
+            client.table("knowledge_files")
+            .select("*")
+            .eq("indexing_status", "pending")
+            .is_("deleted_at", "null")
+            .neq("storage_path", "")
+            .order("created_at")
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return rows[0] if rows else None

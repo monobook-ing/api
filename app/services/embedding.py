@@ -196,6 +196,10 @@ async def embed_knowledge_chunks(
     chunks: list[str],
     api_key: str,
     file_name: str = "",
+    language: str = "en",
+    doc_type: str = "general",
+    effective_date: str | None = None,
+    sections: list[str] | None = None,
 ) -> int:
     """Embed pre-chunked knowledge file text. Returns count."""
     # Remove old embeddings for this file
@@ -216,7 +220,15 @@ async def embed_knowledge_chunks(
             i,
             chunk,
             embedding,
-            {"file_name": file_name, "chunk_index": i},
+            {
+                "file_name": file_name,
+                "file_id": file_id,
+                "chunk_index": i,
+                "language": language,
+                "doc_type": doc_type,
+                "effective_date": effective_date,
+                "section": (sections[i] if sections and i < len(sections) else "General"),
+            },
         )
         count += 1
     return count
