@@ -1,6 +1,7 @@
 import logging
+from datetime import date
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from supabase import Client
 
 from app.api import deps
@@ -33,6 +34,7 @@ ALLOWED_MIME_TYPES = {
     "text/plain",
     "text/markdown",
     "text/csv",
+    "text/html",
 }
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
@@ -68,8 +70,11 @@ async def upload_knowledge_file(
 @router.post("/upload", response_model=KnowledgeFileResponse, status_code=status.HTTP_201_CREATED)
 async def upload_knowledge_file_with_content(
     property_id: str,
-    file: UploadFile,
     background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    language: str = Form("en"),
+    doc_type: str = Form("general"),
+    effective_date: date | None = Form(None),
     current_user: dict = Depends(deps.get_current_user),
     client: Client = Depends(get_supabase),
 ):
@@ -81,7 +86,10 @@ async def upload_knowledge_file_with_content(
     if file.content_type and file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type: {file.content_type}. Allowed: PDF, DOCX, TXT",
+            detail=(
+                f"Unsupported file type: {file.content_type}. "
+                "Allowed: PDF, DOCX, DOC, TXT, MD, CSV, HTML"
+            ),
         )
 
     file_bytes = await file.read()
@@ -117,6 +125,10 @@ async def upload_knowledge_file_with_content(
         "size": size_str,
         "storage_path": storage_path,
         "mime_type": file.content_type,
+        "language": language,
+        "doc_type": doc_type,
+        "effective_date": effective_date.isoformat() if effective_date else None,
+        "indexing_status": "pending",
     }
     f = await create_knowledge_file(client, property_id, data)
 
@@ -136,6 +148,9 @@ async def upload_knowledge_file_with_content(
             file.content_type or "text/plain",
             api_key,
             file.filename or "unknown",
+            language,
+            doc_type,
+            effective_date.isoformat() if effective_date else None,
         )
 
     return f
