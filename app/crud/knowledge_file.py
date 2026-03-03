@@ -23,6 +23,18 @@ async def create_knowledge_file(client: Client, property_id: str, data: dict) ->
     return response.data[0]
 
 
+async def get_knowledge_file_content(client: Client, file_id: str) -> list[dict]:
+    response = (
+        client.table("embeddings")
+        .select("content, chunk_index, metadata")
+        .eq("source_type", "knowledge_chunk")
+        .eq("source_id", file_id)
+        .order("chunk_index")
+        .execute()
+    )
+    return response.data or []
+
+
 async def delete_knowledge_file(client: Client, file_id: str, user_id: str) -> bool:
     response = (
         client.table("knowledge_files")
