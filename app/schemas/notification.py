@@ -12,6 +12,7 @@ class NotificationType(str, Enum):
     UPDATES = "updates"
     INVITE_ACCEPTED = "invite_accepted"
     BOOKING_SUCCESS = "booking_success"
+    SERVICE_BOOKING = "service_booking"
 
 
 class NotificationResponse(BaseModel):

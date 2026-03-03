@@ -11,7 +11,7 @@ import logging
 import math
 import re
 import uuid as _uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from supabase import Client
@@ -26,10 +26,15 @@ from app.crud.currency import (
     resolve_currency_display,
 )
 from app.crud.property import get_property_by_id
+from app.crud.service import get_account_id_for_property, get_service_by_id, list_services
 from app.core.config import get_settings
 from app.services.places import PlacesService
-from app.services.booking_notifications import notify_booking_success
+from app.services.booking_notifications import (
+    notify_booking_success,
+    notify_service_booking_success,
+)
 from app.services.embedding import search_similar
+from app.services.resend import send_service_booking_email
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -1439,4 +1444,693 @@ async def get_curated_places(
         "nearby": [],
         "count_curated": len(items),
         "count_nearby": 0,
+    }
+
+
+def _normalize_slot_time_key(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    parts = normalized.split(":")
+    if len(parts) >= 2:
+        return f"{parts[0].zfill(2)}:{parts[1].zfill(2)}"
+    return normalized
+
+
+def _service_is_slot_based(service: dict[str, Any]) -> bool:
+    capacity_mode = str(service.get("capacity_mode") or "").lower()
+    availability_type = str(service.get("availability_type") or "").lower()
+    return capacity_mode in {"per_hour_limit", "slot_based"} or availability_type == "time_slot"
+
+
+def _service_capacity_limit(service: dict[str, Any]) -> int:
+    raw = service.get("capacity_limit")
+    if raw is None:
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _service_slot_capacity(slot: dict[str, Any]) -> int:
+    raw = slot.get("capacity")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _service_slot_booked(slot: dict[str, Any]) -> int:
+    raw = slot.get("booked")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _service_public_and_active(service: dict[str, Any]) -> bool:
+    status = str(service.get("status") or "").lower()
+    visibility = str(service.get("visibility") or "").lower()
+    return status == "active" and visibility == "public"
+
+
+async def _get_property_team_emails(client: Client, property_id: str) -> list[str]:
+    account_id = await get_account_id_for_property(client, property_id)
+    if not account_id:
+        return []
+
+    members_response = (
+        client.table("team_members")
+        .select("user_id")
+        .eq("account_id", account_id)
+        .eq("status", "accepted")
+        .is_("deleted_at", "null")
+        .execute()
+    )
+    user_ids = []
+    for row in members_response.data or []:
+        user_id = row.get("user_id")
+        if user_id and user_id not in user_ids:
+            user_ids.append(user_id)
+    if not user_ids:
+        return []
+
+    users_response = client.table("users").select("email").in_("id", user_ids).execute()
+    emails = []
+    for row in users_response.data or []:
+        email = str(row.get("email") or "").strip()
+        if email and email not in emails:
+            emails.append(email)
+    return emails
+
+
+def _service_category_matches(service: dict[str, Any], category: str) -> bool:
+    normalized = category.strip().lower()
+    if not normalized:
+        return True
+
+    if _is_valid_uuid(category):
+        return str(service.get("category_id") or "") == category
+
+    category_name = str(service.get("category_name") or "").strip().lower()
+    return category_name == normalized
+
+
+async def list_services_tool(
+    client: Client,
+    property_id: str,
+    search: str = "",
+    category: str = "",
+    limit: int = 20,
+    session_id: str | None = None,
+    source: str = "widget",
+) -> dict[str, Any]:
+    """List active public services available for guests."""
+    safe_limit = max(1, min(int(limit or 20), 100))
+    services = await list_services(
+        client,
+        property_id,
+        search=search or None,
+        category_id=category if _is_valid_uuid(category) else None,
+        status_filter="active",
+    )
+
+    filtered = [
+        service
+        for service in services
+        if str(service.get("visibility") or "").lower() == "public"
+    ]
+    if category and not _is_valid_uuid(category):
+        filtered = [service for service in filtered if _service_category_matches(service, category)]
+
+    filtered = filtered[:safe_limit]
+    currency_display_map = await get_currency_display_map(
+        client, [service.get("currency_code") for service in filtered]
+    )
+
+    normalized_services = []
+    for service in filtered:
+        currency_code = normalize_currency_code(service.get("currency_code"))
+        normalized_services.append(
+            {
+                "id": service.get("id"),
+                "name": service.get("name"),
+                "short_description": service.get("short_description") or "",
+                "full_description": service.get("full_description") or "",
+                "image_urls": service.get("image_urls") or [],
+                "category_id": service.get("category_id"),
+                "category_name": service.get("category_name"),
+                "partner_id": service.get("partner_id"),
+                "partner_name": service.get("partner_name"),
+                "price": _to_float(service.get("price")),
+                "pricing_type": service.get("pricing_type") or "fixed",
+                "currency_code": currency_code,
+                "currency_display": resolve_currency_display(currency_code, currency_display_map),
+                "availability_type": service.get("availability_type") or "always",
+                "capacity_mode": service.get("capacity_mode") or "unlimited",
+                "capacity_limit": service.get("capacity_limit"),
+                "slots": service.get("slots") or [],
+            }
+        )
+
+    await log_tool_call(
+        client=client,
+        property_id=property_id,
+        session_id=session_id,
+        tool_name="list_services",
+        description="Listed active public services",
+        status="success",
+        source=source,
+        request_payload={"search": search, "category": category, "limit": safe_limit},
+        response_payload={"count": len(normalized_services)},
+    )
+
+    return {
+        "property_id": property_id,
+        "services": normalized_services,
+        "count": len(normalized_services),
+    }
+
+
+async def get_service_details_tool(
+    client: Client,
+    property_id: str,
+    service_id: str,
+    session_id: str | None = None,
+    source: str = "widget",
+) -> dict[str, Any]:
+    """Get details for a single service."""
+    service = await get_service_by_id(client, property_id, service_id)
+    if not service:
+        return {"error": "Service not found."}
+
+    currency_code = normalize_currency_code(service.get("currency_code"))
+    currency_display_map = await get_currency_display_map(client, [currency_code])
+
+    result = {
+        **service,
+        "price": _to_float(service.get("price")),
+        "currency_code": currency_code,
+        "currency_display": resolve_currency_display(currency_code, currency_display_map),
+        "slots": service.get("slots") or [],
+    }
+
+    await log_tool_call(
+        client=client,
+        property_id=property_id,
+        session_id=session_id,
+        tool_name="get_service_details",
+        description=f"Retrieved service details: {service_id}",
+        status="success",
+        source=source,
+        request_payload={"service_id": service_id},
+        response_payload={"found": True},
+    )
+
+    return {"service": result}
+
+
+async def check_service_availability_tool(
+    client: Client,
+    property_id: str,
+    service_id: str,
+    service_date: str,
+    quantity: int = 1,
+    slot_time: str | None = None,
+    session_id: str | None = None,
+    source: str = "widget",
+) -> dict[str, Any]:
+    """Check whether a service can be booked for the requested date/quantity."""
+    if quantity <= 0:
+        return {"available": False, "error": "quantity must be greater than 0."}
+
+    try:
+        normalized_service_date = date.fromisoformat(service_date).isoformat()
+    except ValueError:
+        return {"available": False, "error": "service_date must be in YYYY-MM-DD format."}
+
+    service = await get_service_by_id(client, property_id, service_id)
+    if not service:
+        return {"available": False, "error": "Service not found."}
+    if not _service_public_and_active(service):
+        return {"available": False, "error": "Service is not active and public."}
+
+    capacity_mode = str(service.get("capacity_mode") or "unlimited").lower()
+    is_slot_based = _service_is_slot_based(service)
+    availability: dict[str, Any] = {
+        "available": True,
+        "service_id": service_id,
+        "service_date": normalized_service_date,
+        "quantity": quantity,
+        "capacity_mode": capacity_mode,
+    }
+
+    if capacity_mode == "unlimited" and not is_slot_based:
+        await log_tool_call(
+            client=client,
+            property_id=property_id,
+            session_id=session_id,
+            tool_name="check_service_availability",
+            description=f"Checked service availability for {service_id}: available",
+            status="success",
+            source=source,
+            request_payload={
+                "service_id": service_id,
+                "service_date": normalized_service_date,
+                "quantity": quantity,
+                "slot_time": slot_time,
+            },
+            response_payload={"available": True, "capacity_mode": capacity_mode},
+        )
+        return availability
+
+    if is_slot_based:
+        slots = service.get("slots") if isinstance(service.get("slots"), list) else []
+        requested_slot_key = _normalize_slot_time_key(slot_time)
+        selected_slot: dict[str, Any] | None = None
+
+        if requested_slot_key:
+            for slot in slots:
+                if _normalize_slot_time_key(str(slot.get("time") or "")) == requested_slot_key:
+                    selected_slot = slot
+                    break
+        else:
+            for slot in slots:
+                slot_capacity = _service_slot_capacity(slot)
+                slot_booked = _service_slot_booked(slot)
+                if slot_capacity <= 0 or slot_booked + quantity <= slot_capacity:
+                    selected_slot = slot
+                    break
+
+        if not selected_slot:
+            availability.update(
+                {
+                    "available": False,
+                    "error": "No available service slot for the requested quantity.",
+                    "slots": slots,
+                }
+            )
+        else:
+            slot_capacity = _service_slot_capacity(selected_slot)
+            slot_booked = _service_slot_booked(selected_slot)
+            slot_remaining = max(slot_capacity - slot_booked, 0) if slot_capacity > 0 else None
+            availability.update(
+                {
+                    "slot_id": selected_slot.get("id"),
+                    "slot_time": selected_slot.get("time"),
+                    "slot_capacity": slot_capacity,
+                    "slot_booked": slot_booked,
+                    "slot_remaining": slot_remaining,
+                    "available": slot_capacity <= 0 or slot_booked + quantity <= slot_capacity,
+                }
+            )
+            if not availability["available"]:
+                availability["error"] = "Requested quantity exceeds slot capacity."
+
+        await log_tool_call(
+            client=client,
+            property_id=property_id,
+            session_id=session_id,
+            tool_name="check_service_availability",
+            description=(
+                f"Checked slot availability for service {service_id}: "
+                f"{'available' if availability.get('available') else 'unavailable'}"
+            ),
+            status="success",
+            source=source,
+            request_payload={
+                "service_id": service_id,
+                "service_date": normalized_service_date,
+                "quantity": quantity,
+                "slot_time": slot_time,
+            },
+            response_payload={
+                "available": availability.get("available", False),
+                "slot_time": availability.get("slot_time"),
+            },
+        )
+        return availability
+
+    if capacity_mode in {"limited_quantity", "per_day_limit"}:
+        capacity_limit = _service_capacity_limit(service)
+        query = (
+            client.table("service_bookings")
+            .select("quantity")
+            .eq("property_id", property_id)
+            .eq("service_id", service_id)
+            .neq("status", "cancelled")
+        )
+        if capacity_mode == "per_day_limit":
+            query = query.eq("service_date", normalized_service_date)
+        bookings_response = query.execute()
+        booked_quantity = sum(int(row.get("quantity") or 0) for row in bookings_response.data or [])
+        remaining = max(capacity_limit - booked_quantity, 0)
+        available = capacity_limit > 0 and booked_quantity + quantity <= capacity_limit
+
+        availability.update(
+            {
+                "available": available,
+                "capacity_limit": capacity_limit,
+                "booked_quantity": booked_quantity,
+                "remaining_quantity": remaining,
+            }
+        )
+        if capacity_limit <= 0:
+            availability["available"] = False
+            availability["error"] = "Service capacity_limit is not configured."
+        elif not available:
+            availability["error"] = "Requested quantity exceeds remaining capacity."
+
+        await log_tool_call(
+            client=client,
+            property_id=property_id,
+            session_id=session_id,
+            tool_name="check_service_availability",
+            description=(
+                f"Checked quantity availability for service {service_id}: "
+                f"{'available' if availability.get('available') else 'unavailable'}"
+            ),
+            status="success",
+            source=source,
+            request_payload={
+                "service_id": service_id,
+                "service_date": normalized_service_date,
+                "quantity": quantity,
+                "slot_time": slot_time,
+            },
+            response_payload={
+                "available": availability.get("available", False),
+                "remaining_quantity": availability.get("remaining_quantity"),
+            },
+        )
+        return availability
+
+    await log_tool_call(
+        client=client,
+        property_id=property_id,
+        session_id=session_id,
+        tool_name="check_service_availability",
+        description=f"Checked service availability for {service_id}: available",
+        status="success",
+        source=source,
+        request_payload={
+            "service_id": service_id,
+            "service_date": normalized_service_date,
+            "quantity": quantity,
+            "slot_time": slot_time,
+        },
+        response_payload={"available": True, "capacity_mode": capacity_mode},
+    )
+    return availability
+
+
+async def create_service_booking_tool(
+    client: Client,
+    property_id: str,
+    service_id: str,
+    guest_name: str,
+    service_date: str,
+    quantity: int = 1,
+    guest_email: str | None = None,
+    slot_time: str | None = None,
+    session_id: str | None = None,
+    source: str = "widget",
+    booking_status: str = "confirmed",
+) -> dict[str, Any]:
+    """Create a service booking after availability check."""
+    _ = guest_email
+    cleaned_guest_name = (guest_name or "").strip()
+    if not cleaned_guest_name:
+        return {"error": "guest_name is required."}
+    if quantity <= 0:
+        return {"error": "quantity must be greater than 0."}
+    try:
+        normalized_service_date = date.fromisoformat(service_date).isoformat()
+    except ValueError:
+        return {"error": "service_date must be in YYYY-MM-DD format."}
+
+    service = await get_service_by_id(client, property_id, service_id)
+    if not service:
+        return {"error": "Service not found."}
+    if not _service_public_and_active(service):
+        return {"error": "Service is not available for booking."}
+
+    availability = await check_service_availability_tool(
+        client=client,
+        property_id=property_id,
+        service_id=service_id,
+        service_date=normalized_service_date,
+        quantity=quantity,
+        slot_time=slot_time,
+        session_id=session_id,
+        source=source,
+    )
+    if not availability.get("available"):
+        return {"error": availability.get("error", "Service is not available."), "availability": availability}
+
+    unit_price = _to_float(service.get("price"))
+    total = round(unit_price * quantity, 2)
+    currency_code = normalize_currency_code(service.get("currency_code"))
+    external_ref = f"SB-{_uuid.uuid4().hex[:10].upper()}"
+
+    booking_payload = {
+        "property_id": property_id,
+        "service_id": service_id,
+        "external_ref": external_ref,
+        "guest_name": cleaned_guest_name,
+        "service_date": normalized_service_date,
+        "quantity": quantity,
+        "total": total,
+        "currency_code": currency_code,
+        "status": booking_status,
+    }
+
+    inserted = client.table("service_bookings").insert(booking_payload).execute()
+    created = inserted.data[0] if inserted.data else None
+    if not created:
+        return {"error": "Failed to create service booking."}
+
+    selected_slot_id = availability.get("slot_id")
+    selected_slot_time = availability.get("slot_time")
+    if selected_slot_id:
+        slot_booked = int(availability.get("slot_booked") or 0)
+        updated_booked = max(0, slot_booked + quantity)
+        (
+            client.table("service_time_slots")
+            .update({"booked": updated_booked})
+            .eq("id", selected_slot_id)
+            .eq("service_id", service_id)
+            .execute()
+        )
+
+    await notify_service_booking_success(
+        client,
+        booking={
+            **created,
+            "quantity": quantity,
+            "total": total,
+            "currency_code": currency_code,
+        },
+        service_name=str(service.get("name") or ""),
+    )
+
+    try:
+        recipients = await _get_property_team_emails(client, property_id)
+        await send_service_booking_email(
+            recipients=recipients,
+            service_name=str(service.get("name") or "Service"),
+            guest_name=cleaned_guest_name,
+            service_date=normalized_service_date,
+            quantity=quantity,
+            total=total,
+            currency_code=currency_code,
+            external_ref=external_ref,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to send service booking email: %s", exc)
+
+    await log_tool_call(
+        client=client,
+        property_id=property_id,
+        session_id=session_id,
+        tool_name="create_service_booking",
+        description=f"Created service booking for {cleaned_guest_name}",
+        status="success",
+        source=source,
+        request_payload={
+            "service_id": service_id,
+            "service_date": normalized_service_date,
+            "quantity": quantity,
+            "slot_time": slot_time,
+        },
+        response_payload={"service_booking_id": created.get("id"), "total": total},
+    )
+
+    return {
+        "booking_id": created.get("id"),
+        "external_ref": external_ref,
+        "status": booking_status,
+        "service_id": service_id,
+        "service_name": service.get("name"),
+        "guest_name": cleaned_guest_name,
+        "service_date": normalized_service_date,
+        "quantity": quantity,
+        "unit_price": unit_price,
+        "total": total,
+        "currency_code": currency_code,
+        "slot_time": selected_slot_time,
+        "message": f"Service booked successfully. Reference: {external_ref}",
+    }
+
+
+async def cancel_service_booking_tool(
+    client: Client,
+    property_id: str,
+    service_booking_id: str,
+    slot_time: str | None = None,
+    session_id: str | None = None,
+    source: str = "widget",
+) -> dict[str, Any]:
+    """Cancel an existing service booking."""
+    response = (
+        client.table("service_bookings")
+        .select("*")
+        .eq("id", service_booking_id)
+        .eq("property_id", property_id)
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        return {"error": "Service booking not found."}
+
+    booking = response.data[0]
+    current_status = str(booking.get("status") or "").lower()
+    if current_status == "cancelled":
+        return {
+            "service_booking_id": service_booking_id,
+            "status": "cancelled",
+            "message": "Service booking is already cancelled.",
+        }
+
+    (
+        client.table("service_bookings")
+        .update({"status": "cancelled", "updated_at": datetime.utcnow().isoformat()})
+        .eq("id", service_booking_id)
+        .eq("property_id", property_id)
+        .execute()
+    )
+
+    decremented_slot_time: str | None = None
+    service_id = str(booking.get("service_id") or "")
+    service = await get_service_by_id(client, property_id, service_id)
+    if service and _service_is_slot_based(service):
+        slots = service.get("slots") if isinstance(service.get("slots"), list) else []
+        target_slot: dict[str, Any] | None = None
+        normalized_slot_key = _normalize_slot_time_key(slot_time)
+
+        if normalized_slot_key:
+            for slot in slots:
+                if _normalize_slot_time_key(str(slot.get("time") or "")) == normalized_slot_key:
+                    target_slot = slot
+                    break
+        if target_slot is None:
+            for slot in slots:
+                if _service_slot_booked(slot) > 0:
+                    target_slot = slot
+                    break
+
+        if target_slot and target_slot.get("id"):
+            updated_booked = max(
+                0,
+                _service_slot_booked(target_slot) - int(booking.get("quantity") or 1),
+            )
+            (
+                client.table("service_time_slots")
+                .update({"booked": updated_booked})
+                .eq("id", target_slot["id"])
+                .eq("service_id", service_id)
+                .execute()
+            )
+            decremented_slot_time = str(target_slot.get("time") or "")
+
+    await log_tool_call(
+        client=client,
+        property_id=property_id,
+        session_id=session_id,
+        tool_name="cancel_service_booking",
+        description=f"Cancelled service booking {service_booking_id}",
+        status="success",
+        source=source,
+        request_payload={
+            "service_booking_id": service_booking_id,
+            "slot_time": slot_time,
+        },
+        response_payload={"status": "cancelled", "decremented_slot_time": decremented_slot_time},
+    )
+
+    return {
+        "service_booking_id": service_booking_id,
+        "status": "cancelled",
+        "decremented_slot_time": decremented_slot_time,
+        "message": "Service booking cancelled successfully.",
+    }
+
+
+async def search_service_kb_tool(
+    client: Client,
+    property_id: str,
+    api_key: str,
+    query: str,
+    limit: int = 5,
+    threshold: float = 0.6,
+    session_id: str | None = None,
+    source: str = "widget",
+) -> dict[str, Any]:
+    """Semantic search over service-related knowledge chunks."""
+    safe_limit = max(1, min(int(limit or 5), 20))
+    results = await search_similar(
+        client=client,
+        property_id=property_id,
+        query=query,
+        api_key=api_key,
+        limit=safe_limit,
+        threshold=threshold,
+    )
+
+    knowledge_results = [
+        row
+        for row in results
+        if str(row.get("source_type") or "") == "knowledge_chunk"
+    ]
+
+    formatted = [
+        {
+            "content": row.get("content", ""),
+            "source_type": row.get("source_type"),
+            "source_id": row.get("source_id"),
+            "similarity": round(float(row.get("similarity") or 0), 3),
+            "file_name": (row.get("metadata") or {}).get("file_name", ""),
+            "section": (row.get("metadata") or {}).get("section", ""),
+        }
+        for row in knowledge_results
+    ]
+
+    await log_tool_call(
+        client=client,
+        property_id=property_id,
+        session_id=session_id,
+        tool_name="search_service_kb",
+        description=f"Searched service knowledge: '{query}'",
+        status="success",
+        source=source,
+        request_payload={"query": query, "limit": safe_limit, "threshold": threshold},
+        response_payload={"count": len(formatted)},
+    )
+
+    return {
+        "results": formatted,
+        "count": len(formatted),
     }

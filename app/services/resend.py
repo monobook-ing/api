@@ -239,3 +239,82 @@ async def send_invite_accepted_email(
             pass
 
         raise ResendSendError(error_message, status_code=response.status_code)
+
+
+async def send_service_booking_email(
+    *,
+    recipients: list[str],
+    service_name: str,
+    guest_name: str,
+    service_date: str,
+    quantity: int,
+    total: float,
+    currency_code: str,
+    external_ref: str,
+) -> None:
+    """Notify team members about a service booking."""
+    settings = get_settings()
+
+    if settings.skip_emails:
+        return
+
+    if not settings.resend_api_key:
+        raise ResendConfigurationError("RESEND_API_KEY is not configured.")
+
+    if not settings.resend_from_email:
+        raise ResendConfigurationError("RESEND_FROM_EMAIL is not configured.")
+
+    cleaned_recipients = sorted({email.strip() for email in recipients if email and email.strip()})
+    if not cleaned_recipients:
+        return
+
+    total_display = f"{float(total):.2f} {currency_code.upper()}"
+    subject = f"New service booking: {service_name}"
+
+    text_body = "\n".join(
+        [
+            "A new service booking was created.",
+            "",
+            f"Service: {service_name}",
+            f"Guest: {guest_name}",
+            f"Date: {service_date}",
+            f"Quantity: {quantity}",
+            f"Total: {total_display}",
+            f"Reference: {external_ref}",
+        ]
+    )
+
+    html_body = (
+        "<p>A new service booking was created.</p>"
+        f"<p><strong>Service:</strong> {service_name}<br/>"
+        f"<strong>Guest:</strong> {guest_name}<br/>"
+        f"<strong>Date:</strong> {service_date}<br/>"
+        f"<strong>Quantity:</strong> {quantity}<br/>"
+        f"<strong>Total:</strong> {total_display}<br/>"
+        f"<strong>Reference:</strong> {external_ref}</p>"
+    )
+
+    payload: dict[str, Any] = {
+        "from": str(settings.resend_from_email),
+        "to": cleaned_recipients,
+        "subject": subject,
+        "text": text_body,
+        "html": html_body,
+    }
+
+    headers = {"Authorization": f"Bearer {settings.resend_api_key}"}
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.post(RESEND_EMAILS_URL, json=payload, headers=headers)
+
+    if not response.is_success:
+        error_message = "Resend email send failed."
+
+        try:
+            data = response.json()
+            if isinstance(data, dict) and data.get("message"):
+                error_message = str(data["message"])
+        except ValueError:
+            pass
+
+        raise ResendSendError(error_message, status_code=response.status_code)

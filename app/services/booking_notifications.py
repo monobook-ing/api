@@ -84,6 +84,32 @@ def _build_booking_notification_content(
     return subject, body
 
 
+def _build_service_booking_notification_content(
+    booking: dict[str, Any],
+    *,
+    service_name: str | None,
+) -> tuple[str, str]:
+    service_value = (service_name or "").strip() or "Service"
+    guest_value = str(booking.get("guest_name") or "").strip() or "Guest"
+    service_date = str(booking.get("service_date") or "-")
+    quantity = int(booking.get("quantity") or 1)
+    total = booking.get("total")
+    currency_code = str(booking.get("currency_code") or "USD").upper()
+    external_ref = str(booking.get("external_ref") or "-")
+    total_value = f"{total} {currency_code}" if total is not None else f"- {currency_code}"
+
+    subject = "New service booking"
+    body = (
+        f"Service: {service_value}. "
+        f"Guest: {guest_value}. "
+        f"Date: {service_date}. "
+        f"Quantity: {quantity}. "
+        f"Total: {total_value}. "
+        f"Ref: {external_ref}."
+    )
+    return subject, body
+
+
 async def notify_booking_success(
     client: Client, *, booking: dict[str, Any], guest_name: str | None
 ) -> None:
@@ -127,3 +153,45 @@ async def notify_booking_success(
                 )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to process booking success notifications: %s", exc)
+
+
+async def notify_service_booking_success(
+    client: Client,
+    *,
+    booking: dict[str, Any],
+    service_name: str | None,
+) -> None:
+    """Create best-effort service booking notifications for accepted team members."""
+    try:
+        property_id = str(booking.get("property_id") or "")
+        if not property_id:
+            return
+
+        recipient_user_ids = await _get_property_recipient_user_ids(client, property_id)
+        if not recipient_user_ids:
+            return
+
+        subject, body = _build_service_booking_notification_content(
+            booking,
+            service_name=service_name,
+        )
+
+        for user_id in recipient_user_ids:
+            try:
+                await create_notification(
+                    client,
+                    user_id=user_id,
+                    subject=subject,
+                    body=body,
+                    notification_type=NotificationType.SERVICE_BOOKING,
+                    details=body,
+                    cta=None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to create service booking notification for user %s: %s",
+                    user_id,
+                    exc,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to process service booking notifications: %s", exc)
