@@ -1,8 +1,9 @@
 """Multi-agent system using OpenAI Agents SDK.
 
-Three agents with handoff pattern:
+Four agents with handoff pattern:
   Triage Agent → Hotel Search Agent (find rooms, property info, knowledge base)
   Triage Agent → Booking Agent (availability, pricing, create booking)
+  Triage Agent → Services Agent (list/search/book add-on services)
 """
 
 from __future__ import annotations
@@ -16,11 +17,17 @@ from supabase import Client
 
 from app.agents.guardrails import sanitize_input
 from app.agents.tools import (
+    cancel_service_booking_tool,
     calculate_price,
+    check_service_availability_tool,
     check_availability,
+    create_service_booking_tool,
+    get_service_details_tool,
     get_curated_places,
     get_property_info,
     get_room_details,
+    list_services_tool,
+    search_service_kb_tool,
     search_places_nearby,
     search_knowledge_base,
     search_rooms,
@@ -209,6 +216,130 @@ async def tool_booking_status(
     return json.dumps(result)
 
 
+# -- Services Agent Tools (wrapped for agents SDK) --
+
+
+@function_tool
+async def tool_list_services(
+    ctx: RunContextWrapper[AgentContext],
+    search: str = "",
+    category: str = "",
+    limit: int = 20,
+) -> str:
+    """List active, public services available to guests."""
+    c = ctx.context
+    result = await list_services_tool(
+        c.client,
+        c.property_id,
+        search=search,
+        category=category,
+        limit=limit,
+        session_id=c.session_id,
+    )
+    return json.dumps(result)
+
+
+@function_tool
+async def tool_get_service_details(
+    ctx: RunContextWrapper[AgentContext],
+    service_id: str,
+) -> str:
+    """Get complete details for a single service including slots, category, and partner."""
+    c = ctx.context
+    result = await get_service_details_tool(
+        c.client,
+        c.property_id,
+        service_id,
+        c.session_id,
+    )
+    return json.dumps(result)
+
+
+@function_tool
+async def tool_check_service_availability(
+    ctx: RunContextWrapper[AgentContext],
+    service_id: str,
+    service_date: str,
+    quantity: int = 1,
+    slot_time: str = "",
+) -> str:
+    """Check service availability for a date, quantity, and optional slot."""
+    c = ctx.context
+    result = await check_service_availability_tool(
+        c.client,
+        c.property_id,
+        service_id,
+        service_date,
+        quantity,
+        slot_time or None,
+        c.session_id,
+    )
+    return json.dumps(result)
+
+
+@function_tool
+async def tool_book_service(
+    ctx: RunContextWrapper[AgentContext],
+    service_id: str,
+    guest_name: str,
+    service_date: str,
+    quantity: int = 1,
+    guest_email: str = "",
+    slot_time: str = "",
+) -> str:
+    """Book a service for a guest after confirming availability."""
+    c = ctx.context
+    result = await create_service_booking_tool(
+        c.client,
+        c.property_id,
+        service_id,
+        guest_name,
+        service_date,
+        quantity,
+        guest_email or None,
+        slot_time or None,
+        c.session_id,
+    )
+    return json.dumps(result)
+
+
+@function_tool
+async def tool_cancel_service(
+    ctx: RunContextWrapper[AgentContext],
+    service_booking_id: str,
+    slot_time: str = "",
+) -> str:
+    """Cancel an existing service booking by ID."""
+    c = ctx.context
+    result = await cancel_service_booking_tool(
+        c.client,
+        c.property_id,
+        service_booking_id,
+        slot_time or None,
+        c.session_id,
+    )
+    return json.dumps(result)
+
+
+@function_tool
+async def tool_search_service_knowledge(
+    ctx: RunContextWrapper[AgentContext],
+    query: str,
+    limit: int = 5,
+) -> str:
+    """Search service-related knowledge semantically."""
+    c = ctx.context
+    result = await search_service_kb_tool(
+        c.client,
+        c.property_id,
+        c.api_key,
+        query,
+        limit=limit,
+        session_id=c.session_id,
+    )
+    return json.dumps(result)
+
+
 # -- Agent Definitions --
 
 hotel_search_agent = Agent[AgentContext](
@@ -272,9 +403,41 @@ Respond in the same language the guest uses.""",
     ],
 )
 
+services_agent = Agent[AgentContext](
+    name="Services Agent",
+    instructions="""You are a services upsell specialist for hotel add-ons and activities.
+
+Your capabilities:
+- List active public services and explain value clearly
+- Retrieve detailed service information including category, partner, and slots
+- Check service availability for date, quantity, and optional time slots
+- Book services and provide confirmation references
+- Cancel service bookings when requested
+- Search service-related knowledge for policy and operational details
+
+Sales and assistance behavior:
+- Prioritize relevant upsell opportunities (spa, transfers, tours, add-ons) based on guest intent
+- Be transparent about pricing, quantity, and availability constraints before booking
+- For slot-based services, confirm the exact time slot with the guest
+- If the guest wants rooms or stay details, hand off to Hotel Search Agent
+- If the guest wants room reservations, hand off to Booking Agent
+
+Use the runtime server datetime provided in the system message for all date reasoning.
+Respond in the same language the guest uses.""",
+    tools=[
+        tool_list_services,
+        tool_get_service_details,
+        tool_check_service_availability,
+        tool_book_service,
+        tool_cancel_service,
+        tool_search_service_knowledge,
+    ],
+)
+
 # Add handoffs
-hotel_search_agent.handoffs = [handoff(booking_agent)]
-booking_agent.handoffs = [handoff(hotel_search_agent)]
+hotel_search_agent.handoffs = [handoff(booking_agent), handoff(services_agent)]
+booking_agent.handoffs = [handoff(hotel_search_agent), handoff(services_agent)]
+services_agent.handoffs = [handoff(hotel_search_agent), handoff(booking_agent)]
 
 triage_agent = Agent[AgentContext](
     name="Concierge",
@@ -285,6 +448,7 @@ Your role:
 - For room searches, availability questions, or property information → hand off to Hotel Search Agent
 - For restaurant/dining/food recommendations → hand off to Hotel Search Agent
 - For bookings, pricing, or reservation management → hand off to Booking Agent
+- For services, activities, add-ons, spa, or tours → hand off to Services Agent
 - For general questions about the hotel, answer directly using your knowledge
 
 Be concise, helpful, and professional. Use emojis sparingly.
@@ -294,6 +458,7 @@ If the guest starts by describing what they want (dates, room type, budget), imm
     handoffs=[
         handoff(hotel_search_agent),
         handoff(booking_agent),
+        handoff(services_agent),
     ],
 )
 

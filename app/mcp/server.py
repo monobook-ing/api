@@ -58,8 +58,14 @@ except ModuleNotFoundError:  # pragma: no cover - depends on installed extras
 
 from app.agents.tools import (
     _haversine_distance_km,
+    cancel_service_booking_tool,
+    check_service_availability_tool,
     check_availability,
+    create_service_booking_tool,
+    get_service_details_tool,
     get_curated_places as get_curated_places_tool,
+    list_services_tool,
+    search_service_kb_tool,
     search_places_nearby as search_places_nearby_tool,
     search_hotels,
     search_rooms,
@@ -84,6 +90,7 @@ HOTELS_WIDGET_URI = "ui://widget/search-hotels.html"
 AVAILABILITY_WIDGET_URI = "ui://widget/check-availability.html"
 BOOKING_WIDGET_URI = "ui://widget/booking-confirmation.html"
 RESTAURANT_WIDGET_URI = "ui://widget/restaurant-results.html"
+SERVICES_WIDGET_URI = "ui://widget/services.html"
 
 
 def _origin(url: str | None) -> str | None:
@@ -355,7 +362,9 @@ mcp_server = FastMCP(
         "Use property-specific tools search_rooms, check_availability, and create_booking "
         "when you already have a valid UUID property_id. "
         "For dining recommendations, use search_places_nearby, get_curated_places, "
-        "and get_place_details. Always pass ISO dates."
+        "and get_place_details. For add-ons and activities, use list_services, "
+        "get_service_details, check_service_availability, book_service, "
+        "cancel_service_booking, and search_service_kb. Always pass ISO dates."
     ),
     streamable_http_path="/",
     stateless_http=True,
@@ -894,6 +903,287 @@ async def mcp_create_booking(
     )
 
 
+@mcp_server.tool(
+    name="list_services",
+    description="List active public services for a property with optional search/category filters.",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=SERVICES_WIDGET_URI,
+        invoking="Loading services...",
+        invoked="Services ready.",
+    ),
+    structured_output=True,
+)
+async def mcp_list_services(
+    property_id: str,
+    search: str = "",
+    category: str = "",
+    limit: int = 20,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    result = await list_services_tool(
+        client=client,
+        property_id=property_id,
+        search=search,
+        category=category,
+        limit=limit,
+        session_id=session_id,
+        source="chatgpt",
+    )
+    if "error" in result:
+        return _tool_error(str(result["error"]), "services_card")
+
+    return _tool_result(
+        text=f"Loaded {result.get('count', 0)} service(s).",
+        structured_content=result,
+        widget="services_card",
+    )
+
+
+@mcp_server.tool(
+    name="get_service_details",
+    description="Get full details of a service, including slots/category/partner metadata.",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=SERVICES_WIDGET_URI,
+        invoking="Loading service details...",
+        invoked="Service details ready.",
+    ),
+    structured_output=True,
+)
+async def mcp_get_service_details(
+    property_id: str,
+    service_id: str,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    result = await get_service_details_tool(
+        client=client,
+        property_id=property_id,
+        service_id=service_id,
+        session_id=session_id,
+        source="chatgpt",
+    )
+    if "error" in result:
+        return _tool_error(str(result["error"]), "services_card")
+
+    service = result.get("service") or {}
+    service_name = service.get("name") or "service"
+    return _tool_result(
+        text=f"Loaded details for {service_name}.",
+        structured_content=result,
+        widget="services_card",
+    )
+
+
+@mcp_server.tool(
+    name="check_service_availability",
+    description="Check whether a service can be booked for a date/quantity and optional slot.",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=SERVICES_WIDGET_URI,
+        invoking="Checking service availability...",
+        invoked="Service availability ready.",
+    ),
+    structured_output=True,
+)
+async def mcp_check_service_availability(
+    property_id: str,
+    service_id: str,
+    service_date: str,
+    quantity: int = 1,
+    slot_time: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    result = await check_service_availability_tool(
+        client=client,
+        property_id=property_id,
+        service_id=service_id,
+        service_date=service_date,
+        quantity=quantity,
+        slot_time=slot_time,
+        session_id=session_id,
+        source="chatgpt",
+    )
+
+    status_text = "available" if result.get("available") else "unavailable"
+    return _tool_result(
+        text=f"Service is {status_text} for {service_date}.",
+        structured_content=result,
+        widget="services_card",
+    )
+
+
+@mcp_server.tool(
+    name="book_service",
+    description="Create a confirmed service booking for a guest.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=SERVICES_WIDGET_URI,
+        invoking="Booking service...",
+        invoked="Service booked.",
+    ),
+    structured_output=True,
+)
+async def mcp_book_service(
+    property_id: str,
+    service_id: str,
+    guest_name: str,
+    service_date: str,
+    quantity: int = 1,
+    guest_email: str | None = None,
+    slot_time: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    result = await create_service_booking_tool(
+        client=client,
+        property_id=property_id,
+        service_id=service_id,
+        guest_name=guest_name,
+        service_date=service_date,
+        quantity=quantity,
+        guest_email=guest_email,
+        slot_time=slot_time,
+        session_id=session_id,
+        source="chatgpt",
+        booking_status="confirmed",
+    )
+    if "error" in result:
+        return _tool_error(str(result["error"]), "services_card")
+
+    return _tool_result(
+        text=result.get("message", "Service booking created."),
+        structured_content=result,
+        widget="services_card",
+    )
+
+
+@mcp_server.tool(
+    name="cancel_service_booking",
+    description="Cancel a service booking and release reserved slot capacity when applicable.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=SERVICES_WIDGET_URI,
+        invoking="Cancelling service booking...",
+        invoked="Service booking cancelled.",
+    ),
+    structured_output=True,
+)
+async def mcp_cancel_service_booking(
+    property_id: str,
+    service_booking_id: str,
+    slot_time: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    result = await cancel_service_booking_tool(
+        client=client,
+        property_id=property_id,
+        service_booking_id=service_booking_id,
+        slot_time=slot_time,
+        session_id=session_id,
+        source="chatgpt",
+    )
+    if "error" in result:
+        return _tool_error(str(result["error"]), "services_card")
+
+    return _tool_result(
+        text=result.get("message", "Service booking cancelled."),
+        structured_content=result,
+        widget="services_card",
+    )
+
+
+@mcp_server.tool(
+    name="search_service_kb",
+    description="Semantic search over service knowledge content for the property.",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=SERVICES_WIDGET_URI,
+        invoking="Searching service knowledge...",
+        invoked="Service knowledge results ready.",
+    ),
+    structured_output=True,
+)
+async def mcp_search_service_kb(
+    property_id: str,
+    query: str,
+    limit: int = 5,
+    threshold: float = 0.6,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+    try:
+        api_key = await _get_openai_api_key(client, property_id)
+    except ValueError as exc:
+        return _tool_error(str(exc), "services_card")
+
+    result = await search_service_kb_tool(
+        client=client,
+        property_id=property_id,
+        api_key=api_key,
+        query=query,
+        limit=limit,
+        threshold=threshold,
+        session_id=session_id,
+        source="chatgpt",
+    )
+    if "error" in result:
+        return _tool_error(str(result["error"]), "services_card")
+
+    return _tool_result(
+        text=f"Found {result.get('count', 0)} matching service knowledge result(s).",
+        structured_content=result,
+        widget="services_card",
+    )
+
+
 @mcp_server.resource(
     HOTELS_WIDGET_URI,
     name="Monobook Hotel Discovery Widget",
@@ -957,6 +1247,19 @@ def mcp_booking_widget() -> str:
 )
 def mcp_restaurant_widget() -> str:
     return _render_widget_html("restaurant_results")
+
+
+@mcp_server.resource(
+    SERVICES_WIDGET_URI,
+    name="Monobook Services Widget",
+    description="Interactive service cards for add-ons and activities.",
+    mime_type="text/html",
+    meta=_resource_meta(
+        "Browse available services, check availability, and book add-ons."
+    ),
+)
+def mcp_services_widget() -> str:
+    return _render_widget_html("services_card")
 
 
 _mcp_asgi_app: MCPHeaderAuthApp | None = None
