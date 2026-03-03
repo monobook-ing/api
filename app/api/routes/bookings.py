@@ -18,6 +18,7 @@ from app.schemas.booking import (
     BookingResponse,
     BookingUpdate,
 )
+from app.services.booking_notifications import notify_booking_success
 
 router = APIRouter(prefix="/v1.0/properties/{property_id}/bookings", tags=["bookings"])
 
@@ -71,6 +72,7 @@ async def create_new_booking(
     if payload.conversation_id:
         await link_session_to_guest(client, property_id, payload.conversation_id, guest_id)
     booking["guest_name"] = payload.guest_name
+    await notify_booking_success(client, booking=booking, guest_name=payload.guest_name)
     return booking
 
 

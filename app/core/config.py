@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Google OAuth
     google_client_id: str | None = Field(None, env="GOOGLE_CLIENT_ID")
     google_client_secret: str | None = Field(None, env="GOOGLE_CLIENT_SECRET")
+    google_places_api_key: str | None = Field(None, env="GOOGLE_PLACES_API_KEY")
+    places_cache_ttl_seconds: int = 3600
+    places_default_radius_m: int = 1500
 
     # AI / Embedding (Layer 2 & 3)
     openai_api_key: str | None = Field(None, env="OPENAI_API_KEY")

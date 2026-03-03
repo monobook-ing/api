@@ -18,8 +18,10 @@ from app.agents.guardrails import sanitize_input
 from app.agents.tools import (
     calculate_price,
     check_availability,
+    get_curated_places,
     get_property_info,
     get_room_details,
+    search_places_nearby,
     search_knowledge_base,
     search_rooms,
     tool_create_booking,
@@ -94,6 +96,50 @@ async def tool_search_knowledge(
     c = ctx.context
     result = await search_knowledge_base(
         c.client, c.property_id, c.api_key, query, c.session_id
+    )
+    return json.dumps(result)
+
+
+@function_tool
+async def tool_search_restaurants(
+    ctx: RunContextWrapper[AgentContext],
+    query: str = "restaurant",
+    cuisine: str = "",
+    price_level: int = 0,
+    open_now: bool = False,
+    limit: int = 8,
+) -> str:
+    """Search for restaurants near the property. Use for dining recommendations."""
+    c = ctx.context
+    result = await search_places_nearby(
+        c.client,
+        c.property_id,
+        query=query,
+        cuisine=cuisine,
+        price_level=price_level,
+        open_now=open_now,
+        limit=limit,
+        session_id=c.session_id,
+    )
+    return json.dumps(result)
+
+
+@function_tool
+async def tool_get_curated_restaurants(
+    ctx: RunContextWrapper[AgentContext],
+    meal_type: str = "",
+    tags: str = "",
+    limit: int = 5,
+) -> str:
+    """Get the property's curated list of recommended restaurants."""
+    c = ctx.context
+    result = await get_curated_places(
+        c.client,
+        c.property_id,
+        meal_type=meal_type,
+        tags=tags,
+        limit=limit,
+        session_id=c.session_id,
     )
     return json.dumps(result)
 
@@ -174,6 +220,9 @@ Your capabilities:
 - Get detailed property information (location, description, host)
 - Get detailed room information (pricing tiers, amenities, bed config)
 - Search the hotel knowledge base for policies, rules, and FAQ
+- Recommend nearby restaurants by cuisine, price, or meal type
+- For restaurant searches, present curated recommendations first, then nearby options
+- Include walking distance and "best for" tags
 
 When presenting rooms, be descriptive and highlight key features.
 Always include the price per night and amenities.
@@ -187,6 +236,8 @@ Respond in the same language the guest uses.""",
         tool_get_property_info,
         tool_get_room_details,
         tool_search_knowledge,
+        tool_search_restaurants,
+        tool_get_curated_restaurants,
     ],
 )
 
@@ -232,6 +283,7 @@ triage_agent = Agent[AgentContext](
 Your role:
 - Greet guests warmly and understand what they need
 - For room searches, availability questions, or property information → hand off to Hotel Search Agent
+- For restaurant/dining/food recommendations → hand off to Hotel Search Agent
 - For bookings, pricing, or reservation management → hand off to Booking Agent
 - For general questions about the hotel, answer directly using your knowledge
 

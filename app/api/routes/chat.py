@@ -251,6 +251,9 @@ async def send_chat_message(
                         if isinstance(parsed, dict) and "rooms" in parsed and isinstance(parsed["rooms"], list):
                             tool_results.append({"tool": "search_rooms", "data": parsed})
                             yield f"data: {json.dumps({'type': 'tool_result', 'tool': 'search_rooms', 'data': parsed})}\n\n"
+                        elif isinstance(parsed, dict) and ("curated" in parsed or "nearby" in parsed):
+                            tool_results.append({"tool": "search_places_nearby", "data": parsed})
+                            yield f"data: {json.dumps({'type': 'tool_result', 'tool': 'search_places_nearby', 'data': parsed})}\n\n"
                     except (json.JSONDecodeError, AttributeError, TypeError):
                         pass
 
