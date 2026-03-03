@@ -26,6 +26,7 @@ from app.api.routes import (
     embeddings,
     chat,
     curated_places,
+    services,
 )
 from app.core.config import get_settings
 from app.mcp.server import (
@@ -166,6 +167,7 @@ app.include_router(ai_connections.router)
 app.include_router(embeddings.router)
 app.include_router(chat.router)
 app.include_router(curated_places.router)
+app.include_router(services.router)
 
 # ChatGPT Apps remote MCP endpoint (protected by shared-secret header)
 app.mount("/mcp", get_mcp_asgi_app())
