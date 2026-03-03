@@ -10,11 +10,13 @@ from app.crud.ai_connection import get_decrypted_api_key
 from app.crud.knowledge_file import (
     create_knowledge_file,
     delete_knowledge_file,
+    get_knowledge_file_content,
     get_knowledge_files,
 )
 from app.crud.property import user_owns_property
 from app.db.base import get_supabase
 from app.schemas.knowledge_file import (
+    KnowledgeFileContentResponse,
     KnowledgeFileCreate,
     KnowledgeFileListResponse,
     KnowledgeFileResponse,
@@ -177,3 +179,39 @@ async def remove_knowledge_file(
     ).eq("source_id", file_id).execute()
 
     return {"message": "File deleted", "id": file_id}
+
+
+@router.get("/{file_id}/content", response_model=KnowledgeFileContentResponse)
+async def get_file_content(
+    property_id: str,
+    file_id: str,
+    current_user: dict = Depends(deps.get_current_user),
+    client: Client = Depends(get_supabase),
+):
+    """Get extracted text content for a knowledge file."""
+    if not await user_owns_property(client, current_user["id"], property_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    file_response = (
+        client.table("knowledge_files")
+        .select("id, property_id, indexing_status")
+        .eq("id", file_id)
+        .eq("property_id", property_id)
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+    )
+    rows = file_response.data or []
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    file_row = rows[0]
+    if file_row.get("indexing_status") != "indexed":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="File is not indexed yet",
+        )
+
+    chunks = await get_knowledge_file_content(client, file_id)
+    content_chunks = [chunk.get("content") for chunk in chunks if isinstance(chunk.get("content"), str)]
+    return KnowledgeFileContentResponse(content="\n\n".join(content_chunks), chunk_count=len(chunks))

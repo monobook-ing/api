@@ -30,3 +30,8 @@ class KnowledgeFileResponse(BaseModel):
 
 class KnowledgeFileListResponse(BaseModel):
     items: list[KnowledgeFileResponse]
+
+
+class KnowledgeFileContentResponse(BaseModel):
+    content: str
+    chunk_count: int
