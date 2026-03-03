@@ -4,6 +4,7 @@ POST /v1.0/seed
 - Creates 3 properties (accounts + property records) for the current user
 - Creates host profiles for each property
 - Creates rooms with pricing (date overrides + guest tiers)
+- Creates services catalog (categories, partners, services, slots, bookings)
 - Creates guests, chat sessions/messages, and bookings
 - Creates audit log entries
 - Creates knowledge base files
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
 from app.api import deps
+from app.crud.service import create_service, create_service_category, create_service_partner
 from app.db.base import get_supabase
 
 router = APIRouter(prefix="/v1.0", tags=["seed"])
@@ -522,6 +524,492 @@ async def seed_data(
     ]
     client.table("payment_connections").insert(pay_rows).execute()
 
+    # ── 13. Services (categories, partners, services, slots, bookings, analytics) ──
+    category_seed = [
+        {
+            "slug": "spa-wellness",
+            "name": "Spa & Wellness",
+            "description": "Relaxation and body treatments",
+            "icon": "🧖",
+        },
+        {
+            "slug": "dining-drinks",
+            "name": "Dining & Drinks",
+            "description": "Restaurant and bar offerings",
+            "icon": "🍽️",
+        },
+        {
+            "slug": "activities",
+            "name": "Activities",
+            "description": "Tours, excursions, and entertainment",
+            "icon": "🎯",
+        },
+        {
+            "slug": "transport",
+            "name": "Transport",
+            "description": "Airport transfers and car rental",
+            "icon": "🚗",
+        },
+        {
+            "slug": "essentials",
+            "name": "Essentials",
+            "description": "Toiletries, chargers, and extras",
+            "icon": "🧴",
+        },
+    ]
+
+    partner_seed = [
+        {
+            "slug": "city-tours-ltd",
+            "name": "City Tours Ltd.",
+            "revenue_share_percent": 15.0,
+            "payout_type": "manual",
+            "status": "active",
+        },
+        {
+            "slug": "relax-spa-group",
+            "name": "Relax Spa Group",
+            "revenue_share_percent": 20.0,
+            "payout_type": "manual",
+            "status": "active",
+        },
+        {
+            "slug": "green-transfers",
+            "name": "Green Transfers",
+            "revenue_share_percent": 10.0,
+            "payout_type": "manual",
+            "status": "inactive",
+        },
+    ]
+
+    service_seed = [
+        {
+            "slug": "deep-tissue-massage",
+            "name": "Deep Tissue Massage",
+            "short_description": "60-minute deep tissue massage in-room or spa",
+            "full_description": "A therapeutic full-body massage targeting muscle tension and stress relief. Available in-room or at the hotel spa.",
+            "image_urls": [
+                "https://images.unsplash.com/photo-1544161515-4ab6ce6db874?w=1200&h=800&fit=crop"
+            ],
+            "type": "internal",
+            "category_slug": "spa-wellness",
+            "partner_slug": None,
+            "status": "active",
+            "visibility": "public",
+            "pricing_type": "fixed",
+            "price": 89.00,
+            "currency_code": "USD",
+            "vat_percent": 20.00,
+            "allow_discount": True,
+            "bundle_eligible": True,
+            "availability_type": "time_slot",
+            "capacity_mode": "unlimited",
+            "capacity_limit": None,
+            "recurring_schedule_enabled": False,
+            "available_before_booking": True,
+            "available_during_booking": True,
+            "post_booking_upsell": False,
+            "in_stay_qr_ordering": False,
+            "upsell_trigger_room_type": "any",
+            "early_booking_discount_percent": 10.00,
+            "knowledge_language": "en",
+            "knowledge_ai_search_enabled": True,
+            "attach_rate": 24.00,
+            "total_bookings": 187,
+            "revenue_30d": 5340.00,
+            "conversion_rate": 18.00,
+            "slots": [
+                {"time": "09:00", "capacity": 2, "booked": 2, "sort_order": 1},
+                {"time": "11:00", "capacity": 2, "booked": 1, "sort_order": 2},
+                {"time": "14:00", "capacity": 2, "booked": 0, "sort_order": 3},
+                {"time": "16:00", "capacity": 2, "booked": 0, "sort_order": 4},
+            ],
+        },
+        {
+            "slug": "airport-transfer",
+            "name": "Airport Transfer",
+            "short_description": "Private car transfer to/from airport",
+            "full_description": "Comfortable private sedan or minivan transfer between the hotel and the nearest airport. Book up to 24h before arrival.",
+            "image_urls": [
+                "https://images.unsplash.com/photo-1549317661-bd32c8ce0afa?w=1200&h=800&fit=crop"
+            ],
+            "type": "partner",
+            "category_slug": "transport",
+            "partner_slug": "green-transfers",
+            "status": "active",
+            "visibility": "after_booking",
+            "pricing_type": "fixed",
+            "price": 45.00,
+            "currency_code": "USD",
+            "vat_percent": 10.00,
+            "allow_discount": False,
+            "bundle_eligible": True,
+            "availability_type": "linked_booking",
+            "capacity_mode": "unlimited",
+            "capacity_limit": None,
+            "recurring_schedule_enabled": False,
+            "available_before_booking": True,
+            "available_during_booking": True,
+            "post_booking_upsell": False,
+            "in_stay_qr_ordering": False,
+            "upsell_trigger_room_type": "any",
+            "early_booking_discount_percent": None,
+            "knowledge_language": "en",
+            "knowledge_ai_search_enabled": True,
+            "attach_rate": 38.00,
+            "total_bookings": 312,
+            "revenue_30d": 8100.00,
+            "conversion_rate": 32.00,
+            "slots": [],
+        },
+        {
+            "slug": "romantic-dinner-package",
+            "name": "Romantic Dinner Package",
+            "short_description": "4-course dinner with wine pairing for two",
+            "full_description": "An exclusive candlelit 4-course dinner at the rooftop restaurant with curated wine pairing. Perfect for special occasions.",
+            "image_urls": [
+                "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=1200&h=800&fit=crop"
+            ],
+            "type": "internal",
+            "category_slug": "dining-drinks",
+            "partner_slug": None,
+            "status": "active",
+            "visibility": "public",
+            "pricing_type": "per_person",
+            "price": 120.00,
+            "currency_code": "USD",
+            "vat_percent": 20.00,
+            "allow_discount": True,
+            "bundle_eligible": False,
+            "availability_type": "date_range",
+            "capacity_mode": "unlimited",
+            "capacity_limit": None,
+            "recurring_schedule_enabled": False,
+            "available_before_booking": True,
+            "available_during_booking": True,
+            "post_booking_upsell": False,
+            "in_stay_qr_ordering": False,
+            "upsell_trigger_room_type": "any",
+            "early_booking_discount_percent": None,
+            "knowledge_language": "en",
+            "knowledge_ai_search_enabled": True,
+            "attach_rate": 12.00,
+            "total_bookings": 64,
+            "revenue_30d": 3840.00,
+            "conversion_rate": 9.00,
+            "slots": [],
+        },
+        {
+            "slug": "city-walking-tour",
+            "name": "City Walking Tour",
+            "short_description": "Guided 3-hour tour of Old Town highlights",
+            "full_description": "Explore the city's top landmarks with a certified local guide. Includes skip-the-line museum entry and a coffee stop.",
+            "image_urls": [
+                "https://images.unsplash.com/photo-1569949381669-ecf31ae8f613?w=1200&h=800&fit=crop"
+            ],
+            "type": "partner",
+            "category_slug": "activities",
+            "partner_slug": "city-tours-ltd",
+            "status": "draft",
+            "visibility": "public",
+            "pricing_type": "per_person",
+            "price": 35.00,
+            "currency_code": "USD",
+            "vat_percent": 10.00,
+            "allow_discount": True,
+            "bundle_eligible": True,
+            "availability_type": "time_slot",
+            "capacity_mode": "unlimited",
+            "capacity_limit": None,
+            "recurring_schedule_enabled": False,
+            "available_before_booking": True,
+            "available_during_booking": True,
+            "post_booking_upsell": False,
+            "in_stay_qr_ordering": False,
+            "upsell_trigger_room_type": "any",
+            "early_booking_discount_percent": None,
+            "knowledge_language": "en",
+            "knowledge_ai_search_enabled": True,
+            "attach_rate": 8.00,
+            "total_bookings": 42,
+            "revenue_30d": 980.00,
+            "conversion_rate": 6.00,
+            "slots": [
+                {"time": "10:00", "capacity": 12, "booked": 8, "sort_order": 1},
+                {"time": "15:00", "capacity": 12, "booked": 3, "sort_order": 2},
+            ],
+        },
+        {
+            "slug": "premium-toiletry-kit",
+            "name": "Premium Toiletry Kit",
+            "short_description": "Luxury travel-size toiletry set",
+            "full_description": "Eco-friendly premium toiletry kit including shampoo, conditioner, body wash, and moisturizer in reusable containers.",
+            "image_urls": [
+                "https://images.unsplash.com/photo-1556228578-8c89e6adf883?w=1200&h=800&fit=crop"
+            ],
+            "type": "product",
+            "category_slug": "essentials",
+            "partner_slug": None,
+            "status": "active",
+            "visibility": "during_stay",
+            "pricing_type": "fixed",
+            "price": 25.00,
+            "currency_code": "USD",
+            "vat_percent": 20.00,
+            "allow_discount": False,
+            "bundle_eligible": True,
+            "availability_type": "always",
+            "capacity_mode": "unlimited",
+            "capacity_limit": None,
+            "recurring_schedule_enabled": False,
+            "available_before_booking": True,
+            "available_during_booking": True,
+            "post_booking_upsell": False,
+            "in_stay_qr_ordering": True,
+            "upsell_trigger_room_type": "any",
+            "early_booking_discount_percent": None,
+            "knowledge_language": "en",
+            "knowledge_ai_search_enabled": True,
+            "attach_rate": 15.00,
+            "total_bookings": 203,
+            "revenue_30d": 1525.00,
+            "conversion_rate": 12.00,
+            "slots": [],
+        },
+        {
+            "slug": "yoga-session",
+            "name": "Yoga Session",
+            "short_description": "Morning rooftop yoga class",
+            "full_description": "Start your day with a 45-minute guided yoga session on the rooftop terrace. Mats and water provided.",
+            "image_urls": [
+                "https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=1200&h=800&fit=crop"
+            ],
+            "type": "internal",
+            "category_slug": "spa-wellness",
+            "partner_slug": None,
+            "status": "hidden",
+            "visibility": "public",
+            "pricing_type": "per_person",
+            "price": 20.00,
+            "currency_code": "USD",
+            "vat_percent": 20.00,
+            "allow_discount": True,
+            "bundle_eligible": False,
+            "availability_type": "time_slot",
+            "capacity_mode": "unlimited",
+            "capacity_limit": None,
+            "recurring_schedule_enabled": False,
+            "available_before_booking": True,
+            "available_during_booking": True,
+            "post_booking_upsell": False,
+            "in_stay_qr_ordering": False,
+            "upsell_trigger_room_type": "any",
+            "early_booking_discount_percent": None,
+            "knowledge_language": "en",
+            "knowledge_ai_search_enabled": True,
+            "attach_rate": 20.00,
+            "total_bookings": 156,
+            "revenue_30d": 2200.00,
+            "conversion_rate": 15.00,
+            "slots": [
+                {"time": "07:00", "capacity": 10, "booked": 10, "sort_order": 1},
+                {"time": "08:00", "capacity": 10, "booked": 5, "sort_order": 2},
+            ],
+        },
+    ]
+
+    service_booking_seed = [
+        {
+            "external_ref": "sb-1",
+            "service_slug": "deep-tissue-massage",
+            "guest_name": "Anna Muller",
+            "service_date": "2026-02-28",
+            "quantity": 1,
+            "total": 89.00,
+            "status": "confirmed",
+        },
+        {
+            "external_ref": "sb-2",
+            "service_slug": "deep-tissue-massage",
+            "guest_name": "James Lee",
+            "service_date": "2026-02-27",
+            "quantity": 2,
+            "total": 178.00,
+            "status": "confirmed",
+        },
+        {
+            "external_ref": "sb-3",
+            "service_slug": "airport-transfer",
+            "guest_name": "Sophie Martin",
+            "service_date": "2026-02-26",
+            "quantity": 1,
+            "total": 45.00,
+            "status": "pending",
+        },
+        {
+            "external_ref": "sb-4",
+            "service_slug": "romantic-dinner-package",
+            "guest_name": "Carlos Rivera",
+            "service_date": "2026-02-25",
+            "quantity": 2,
+            "total": 240.00,
+            "status": "confirmed",
+        },
+        {
+            "external_ref": "sb-5",
+            "service_slug": "premium-toiletry-kit",
+            "guest_name": "Emily Wang",
+            "service_date": "2026-02-24",
+            "quantity": 3,
+            "total": 75.00,
+            "status": "confirmed",
+        },
+        {
+            "external_ref": "sb-6",
+            "service_slug": "city-walking-tour",
+            "guest_name": "Oliver Brown",
+            "service_date": "2026-02-23",
+            "quantity": 1,
+            "total": 35.00,
+            "status": "cancelled",
+        },
+        {
+            "external_ref": "sb-7",
+            "service_slug": "yoga-session",
+            "guest_name": "Yuki Tanaka",
+            "service_date": "2026-02-22",
+            "quantity": 1,
+            "total": 20.00,
+            "status": "confirmed",
+        },
+    ]
+
+    service_revenue_seed = [
+        {"month": "2025-09-01", "revenue": 4200.00},
+        {"month": "2025-10-01", "revenue": 5800.00},
+        {"month": "2025-11-01", "revenue": 6100.00},
+        {"month": "2025-12-01", "revenue": 8400.00},
+        {"month": "2026-01-01", "revenue": 7200.00},
+        {"month": "2026-02-01", "revenue": 9100.00},
+    ]
+
+    seeded_service_categories = 0
+    seeded_service_partners = 0
+    seeded_services = 0
+    seeded_service_bookings = 0
+    seeded_service_revenue_points = 0
+
+    for property_id in property_ids:
+        category_ids_by_slug: dict[str, str] = {}
+        for idx, category in enumerate(category_seed):
+            created_category = await create_service_category(
+                client,
+                property_id,
+                {
+                    "name": category["name"],
+                    "description": category["description"],
+                    "icon": category["icon"],
+                    "sort_order": idx + 1,
+                },
+            )
+            category_id = created_category.get("id")
+            if category_id:
+                category_ids_by_slug[category["slug"]] = category_id
+                seeded_service_categories += 1
+
+        partner_ids_by_slug: dict[str, str] = {}
+        for partner in partner_seed:
+            created_partner = await create_service_partner(
+                client,
+                property_id,
+                {
+                    "name": partner["name"],
+                    "revenue_share_percent": partner["revenue_share_percent"],
+                    "payout_type": partner["payout_type"],
+                    "status": partner["status"],
+                },
+            )
+            partner_id = created_partner.get("id")
+            if partner_id:
+                partner_ids_by_slug[partner["slug"]] = partner_id
+                seeded_service_partners += 1
+
+        service_ids_by_slug: dict[str, str] = {}
+        for service in service_seed:
+            payload = {
+                "name": service["name"],
+                "short_description": service["short_description"],
+                "full_description": service["full_description"],
+                "image_urls": service["image_urls"],
+                "type": service["type"],
+                "category_id": category_ids_by_slug.get(service["category_slug"]),
+                "partner_id": partner_ids_by_slug.get(service["partner_slug"]),
+                "status": service["status"],
+                "visibility": service["visibility"],
+                "pricing_type": service["pricing_type"],
+                "price": service["price"],
+                "currency_code": service["currency_code"],
+                "vat_percent": service["vat_percent"],
+                "allow_discount": service["allow_discount"],
+                "bundle_eligible": service["bundle_eligible"],
+                "availability_type": service["availability_type"],
+                "capacity_mode": service["capacity_mode"],
+                "capacity_limit": service["capacity_limit"],
+                "recurring_schedule_enabled": service["recurring_schedule_enabled"],
+                "available_before_booking": service["available_before_booking"],
+                "available_during_booking": service["available_during_booking"],
+                "post_booking_upsell": service["post_booking_upsell"],
+                "in_stay_qr_ordering": service["in_stay_qr_ordering"],
+                "upsell_trigger_room_type": service["upsell_trigger_room_type"],
+                "early_booking_discount_percent": service["early_booking_discount_percent"],
+                "knowledge_language": service["knowledge_language"],
+                "knowledge_ai_search_enabled": service["knowledge_ai_search_enabled"],
+                "attach_rate": service["attach_rate"],
+                "total_bookings": service["total_bookings"],
+                "revenue_30d": service["revenue_30d"],
+                "conversion_rate": service["conversion_rate"],
+                "slots": service["slots"],
+            }
+            created_service = await create_service(client, property_id, payload)
+            service_id = created_service.get("id")
+            if service_id:
+                service_ids_by_slug[service["slug"]] = service_id
+                seeded_services += 1
+
+        booking_rows = []
+        for booking in service_booking_seed:
+            service_id = service_ids_by_slug.get(booking["service_slug"])
+            if not service_id:
+                continue
+            booking_rows.append(
+                {
+                    "property_id": property_id,
+                    "service_id": service_id,
+                    "external_ref": booking["external_ref"],
+                    "guest_name": booking["guest_name"],
+                    "service_date": booking["service_date"],
+                    "quantity": booking["quantity"],
+                    "total": booking["total"],
+                    "currency_code": "USD",
+                    "status": booking["status"],
+                }
+            )
+        if booking_rows:
+            client.table("service_bookings").insert(booking_rows).execute()
+            seeded_service_bookings += len(booking_rows)
+
+        revenue_rows = [
+            {
+                "property_id": property_id,
+                "month": point["month"],
+                "revenue": point["revenue"],
+            }
+            for point in service_revenue_seed
+        ]
+        if revenue_rows:
+            client.table("service_revenue_monthly").insert(revenue_rows).execute()
+            seeded_service_revenue_points += len(revenue_rows)
+
     return {
         "message": "Seed data created successfully",
         "properties": len(property_ids),
@@ -532,5 +1020,10 @@ async def seed_data(
         "audit_entries": len(audit_data),
         "knowledge_files": len(files_data),
         "metrics_rows": len(metrics_rows),
+        "service_categories": seeded_service_categories,
+        "service_partners": seeded_service_partners,
+        "services": seeded_services,
+        "service_bookings": seeded_service_bookings,
+        "service_revenue_points": seeded_service_revenue_points,
         "property_ids": property_ids,
     }
