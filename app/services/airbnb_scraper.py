@@ -7,10 +7,14 @@ from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
-from openai import OpenAI
 from pydantic import BaseModel
 
 from app.core.config import get_settings
+
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - local env may have OpenAI<1
+    OpenAI = None
 
 logger = logging.getLogger(__name__)
 
@@ -376,6 +380,9 @@ def _parse_static(html: str) -> ScrapedListing | None:
 
 async def _parse_with_llm(html: str) -> ScrapedListing | None:
     """Use LLM to extract listing data when static parsing fails."""
+    if OpenAI is None:
+        return None
+
     settings = get_settings()
     if not settings.openai_api_key:
         return None

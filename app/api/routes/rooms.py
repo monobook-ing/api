@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
@@ -21,6 +23,7 @@ from app.schemas.room import (
     RoomUpdate,
 )
 from app.services.airbnb_scraper import scrape_airbnb_listing, validate_airbnb_url
+from app.services.booking_scraper import scrape_booking_listing, validate_booking_url
 
 router = APIRouter(prefix="/v1.0/properties/{property_id}/rooms", tags=["rooms"])
 
@@ -28,6 +31,19 @@ router = APIRouter(prefix="/v1.0/properties/{property_id}/rooms", tags=["rooms"]
 async def _check_access(client: Client, user_id: str, property_id: str):
     if not await user_owns_property(client, user_id, property_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+
+def _detect_listing_platform(url: str) -> str:
+    trimmed = url.strip()
+    with_scheme = trimmed if "://" in trimmed else f"https://{trimmed}"
+    hostname = (urlparse(with_scheme).hostname or "").lower()
+    if hostname.startswith("airbnb.") or ".airbnb." in hostname:
+        return "airbnb"
+    if hostname.startswith("booking.") or ".booking." in hostname:
+        return "booking"
+    raise ValueError(
+        "Unsupported listing URL. Use an Airbnb or Booking.com listing URL."
+    )
 
 
 @router.get("", response_model=RoomListResponse)
@@ -63,11 +79,16 @@ async def import_room_from_url(
     current_user: dict = Depends(deps.get_current_user),
     client: Client = Depends(get_supabase),
 ):
-    """Import a room from an Airbnb listing URL."""
+    """Import a room from an Airbnb or Booking.com listing URL."""
     await _check_access(client, current_user["id"], property_id)
 
     try:
-        canonical_url = validate_airbnb_url(payload.url)
+        platform = _detect_listing_platform(payload.url)
+        canonical_url = (
+            validate_airbnb_url(payload.url)
+            if platform == "airbnb"
+            else validate_booking_url(payload.url)
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -80,13 +101,18 @@ async def import_room_from_url(
         .execute()
     )
     if existing.data:
+        source_label = "Airbnb" if platform == "airbnb" else "Booking.com"
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This Airbnb listing has already been imported to this property.",
+            detail=f"This {source_label} listing has already been imported to this property.",
         )
 
     try:
-        listing = await scrape_airbnb_listing(payload.url)
+        listing = (
+            await scrape_airbnb_listing(payload.url)
+            if platform == "airbnb"
+            else await scrape_booking_listing(payload.url)
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
@@ -98,11 +124,11 @@ async def import_room_from_url(
         "description": listing.description,
         "images": listing.images,
         "price_per_night": listing.price_per_night,
-        "currency_code": "USD",
+        "currency_code": getattr(listing, "currency_code", "USD"),
         "max_guests": listing.max_guests,
         "bed_config": listing.bed_config,
         "amenities": listing.amenities,
-        "source": "airbnb",
+        "source": platform,
         "source_url": canonical_url,
         "sync_enabled": False,
         "status": "active",

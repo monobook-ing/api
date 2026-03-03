@@ -57,7 +57,10 @@ except ModuleNotFoundError:  # pragma: no cover - depends on installed extras
             return app
 
 from app.agents.tools import (
+    _haversine_distance_km,
     check_availability,
+    get_curated_places as get_curated_places_tool,
+    search_places_nearby as search_places_nearby_tool,
     search_hotels,
     search_rooms,
     tool_create_booking,
@@ -72,6 +75,7 @@ from app.crud.currency import (
 from app.crud.ai_connection import get_decrypted_api_key
 from app.db.base import get_supabase_client
 from app.mcp.auth import MCPHeaderAuthApp
+from app.services.places import PlacesService
 
 settings = get_settings()
 
@@ -79,6 +83,7 @@ SEARCH_WIDGET_URI = "ui://widget/search-rooms.html"
 HOTELS_WIDGET_URI = "ui://widget/search-hotels.html"
 AVAILABILITY_WIDGET_URI = "ui://widget/check-availability.html"
 BOOKING_WIDGET_URI = "ui://widget/booking-confirmation.html"
+RESTAURANT_WIDGET_URI = "ui://widget/restaurant-results.html"
 
 
 def _origin(url: str | None) -> str | None:
@@ -243,6 +248,91 @@ def _session_id(ctx: Context | None) -> str | None:
         return None
 
 
+def _to_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None]
+
+
+def _normalize_curated_place(row: dict[str, Any]) -> dict[str, Any]:
+    lat = _to_float(row.get("lat"))
+    lng = _to_float(row.get("lng"))
+    photo_urls = _to_text_list(row.get("photo_urls"))
+    maps_url = None
+    google_place_id = row.get("google_place_id")
+    if google_place_id:
+        maps_url = (
+            "https://www.google.com/maps/search/?api=1"
+            f"&query_place_id={google_place_id}"
+        )
+    elif lat is not None and lng is not None:
+        maps_url = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+
+    return {
+        "place_id": str(row.get("id", "")),
+        "source": "curated",
+        "name": row.get("name", ""),
+        "address": row.get("address"),
+        "lat": lat,
+        "lng": lng,
+        "rating": _to_float(row.get("rating")),
+        "review_count": _to_int(row.get("review_count")),
+        "price_level": _to_int(row.get("price_level")),
+        "cuisine": _to_text_list(row.get("cuisine")),
+        "phone": row.get("phone"),
+        "website": row.get("website"),
+        "photo_url": photo_urls[0] if photo_urls else None,
+        "opening_hours": row.get("opening_hours"),
+        "is_open_now": None,
+        "walking_minutes": _to_int(row.get("walking_minutes")),
+        "distance_m": None,
+        "best_for": _to_text_list(row.get("best_for")),
+        "meal_types": _to_text_list(row.get("meal_types")),
+        "is_curated": True,
+        "is_sponsored": bool(row.get("sponsored", False)),
+        "maps_url": maps_url,
+    }
+
+
+def _attach_distance(
+    place: dict[str, Any],
+    property_lat: float | None,
+    property_lng: float | None,
+) -> dict[str, Any]:
+    if property_lat is None or property_lng is None:
+        return place
+    place_lat = _to_float(place.get("lat"))
+    place_lng = _to_float(place.get("lng"))
+    if place_lat is None or place_lng is None:
+        return place
+
+    distance_km = _haversine_distance_km(property_lat, property_lng, place_lat, place_lng)
+    distance_m = int(round(distance_km * 1000))
+    updated = dict(place)
+    updated["distance_m"] = distance_m
+    if not updated.get("walking_minutes"):
+        updated["walking_minutes"] = max(1, int(round(distance_m / 80)))
+    return updated
+
+
 async def _get_openai_api_key(client: Client, property_id: str) -> str:
     key = await get_decrypted_api_key(client, property_id, "openai")
     if key:
@@ -252,12 +342,20 @@ async def _get_openai_api_key(client: Client, property_id: str) -> str:
     raise ValueError("OpenAI API key is not configured for this property.")
 
 
+def _get_google_places_api_key() -> str:
+    if settings.google_places_api_key:
+        return settings.google_places_api_key
+    raise ValueError("Google Places API key is not configured.")
+
+
 mcp_server = FastMCP(
     name="Monobooking MCP Server",
     instructions=(
         "Use search_hotels for cross-property hotel discovery by location and filters. "
         "Use property-specific tools search_rooms, check_availability, and create_booking "
-        "when you already have a valid UUID property_id. Always pass ISO dates."
+        "when you already have a valid UUID property_id. "
+        "For dining recommendations, use search_places_nearby, get_curated_places, "
+        "and get_place_details. Always pass ISO dates."
     ),
     streamable_http_path="/",
     stateless_http=True,
@@ -384,6 +482,286 @@ async def mcp_search_rooms(
         text=f"Found {count} room(s).",
         structured_content=result,
         widget="search_rooms",
+    )
+
+
+@mcp_server.tool(
+    name="search_places_nearby",
+    description=(
+        "Search restaurants near a property. Returns curated recommendations first, "
+        "plus additional nearby options from Google Places."
+    ),
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    meta=_tool_meta(
+        output_template=RESTAURANT_WIDGET_URI,
+        invoking="Searching restaurants...",
+        invoked="Restaurant results ready.",
+    ),
+    structured_output=True,
+)
+async def mcp_search_places_nearby(
+    property_id: str,
+    query: str = "restaurant",
+    cuisine: str = "",
+    price_level: int = 0,
+    open_now: bool = False,
+    limit: int = 8,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    result = await search_places_nearby_tool(
+        client=client,
+        property_id=property_id,
+        query=query,
+        cuisine=cuisine,
+        price_level=price_level,
+        open_now=open_now,
+        limit=limit,
+        session_id=session_id,
+        source="chatgpt",
+    )
+    if "error" in result:
+        return _tool_error(str(result["error"]), "restaurant_results")
+
+    return _tool_result(
+        text=(
+            f"Found {result.get('count_curated', 0)} curated and "
+            f"{result.get('count_nearby', 0)} nearby restaurant(s)."
+        ),
+        structured_content=result,
+        widget="restaurant_results",
+    )
+
+
+@mcp_server.tool(
+    name="get_curated_places",
+    description="Get the property's curated restaurant recommendations.",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=RESTAURANT_WIDGET_URI,
+        invoking="Loading curated recommendations...",
+        invoked="Curated recommendations ready.",
+    ),
+    structured_output=True,
+)
+async def mcp_get_curated_places(
+    property_id: str,
+    meal_type: str = "",
+    tags: str = "",
+    limit: int = 5,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    result = await get_curated_places_tool(
+        client=client,
+        property_id=property_id,
+        meal_type=meal_type,
+        tags=tags,
+        limit=limit,
+        session_id=session_id,
+        source="chatgpt",
+    )
+    if "error" in result:
+        return _tool_error(str(result["error"]), "restaurant_results")
+
+    return _tool_result(
+        text=f"Loaded {result.get('count_curated', 0)} curated recommendation(s).",
+        structured_content=result,
+        widget="restaurant_results",
+    )
+
+
+@mcp_server.tool(
+    name="get_place_details",
+    description="Get details for a curated place or a Google place ID.",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=RESTAURANT_WIDGET_URI,
+        invoking="Loading place details...",
+        invoked="Place details ready.",
+    ),
+    structured_output=True,
+)
+async def mcp_get_place_details(
+    property_id: str,
+    place_id: str,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+
+    property_row = (
+        client.table("properties")
+        .select("lat, lng")
+        .eq("id", property_id)
+        .limit(1)
+        .execute()
+    )
+    prop = property_row.data[0] if property_row.data else {}
+    prop_lat = _to_float(prop.get("lat"))
+    prop_lng = _to_float(prop.get("lng"))
+
+    curated = (
+        client.table("curated_places")
+        .select("*")
+        .eq("property_id", property_id)
+        .eq("id", place_id)
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+    )
+    curated_row = curated.data[0] if curated.data else None
+    if curated_row is None:
+        fallback = (
+            client.table("curated_places")
+            .select("*")
+            .eq("property_id", property_id)
+            .eq("google_place_id", place_id)
+            .is_("deleted_at", "null")
+            .limit(1)
+            .execute()
+        )
+        curated_row = fallback.data[0] if fallback.data else None
+
+    if curated_row:
+        place = _attach_distance(_normalize_curated_place(curated_row), prop_lat, prop_lng)
+        return _tool_result(
+            text=f"Loaded details for {place.get('name', 'the place')}.",
+            structured_content={"property_id": property_id, "place": place},
+            widget="restaurant_results",
+        )
+
+    try:
+        api_key = _get_google_places_api_key()
+    except ValueError as exc:
+        return _tool_error(str(exc), "restaurant_results")
+
+    details = await PlacesService.get_place_details(client, place_id, api_key)
+    if not details or not details.get("place_id"):
+        return _tool_error("Place details not found.", "restaurant_results")
+
+    details = _attach_distance(details, prop_lat, prop_lng)
+    return _tool_result(
+        text=f"Loaded details for {details.get('name', 'the place')}.",
+        structured_content={"property_id": property_id, "place": details},
+        widget="restaurant_results",
+    )
+
+
+@mcp_server.tool(
+    name="report_place_issue",
+    description="Report an issue with a place recommendation.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=RESTAURANT_WIDGET_URI,
+        invoking="Reporting issue...",
+        invoked="Issue reported.",
+    ),
+    structured_output=True,
+)
+async def mcp_report_place_issue(
+    property_id: str,
+    place_id: str,
+    place_source: str,
+    issue_type: str,
+    comment: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    inserted = (
+        client.table("place_issues")
+        .insert(
+            {
+                "property_id": property_id,
+                "place_id": place_id,
+                "place_source": place_source,
+                "issue_type": issue_type,
+                "comment": comment,
+                "session_id": session_id,
+                "resolved": False,
+            }
+        )
+        .execute()
+    )
+    item = inserted.data[0] if inserted.data else {}
+    return _tool_result(
+        text="Issue reported.",
+        structured_content={"ok": True, "issue": item},
+        widget="restaurant_results",
+    )
+
+
+@mcp_server.tool(
+    name="track_place_click",
+    description="Track a CTA click (Directions, Reserve, Call) for restaurant cards.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        output_template=RESTAURANT_WIDGET_URI,
+        invoking="Tracking interaction...",
+        invoked="Interaction tracked.",
+    ),
+    structured_output=True,
+)
+async def mcp_track_place_click(
+    property_id: str,
+    place_id: str,
+    place_source: str,
+    context: str,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    validate_property_id(property_id)
+    client = get_supabase_client()
+    session_id = _session_id(ctx)
+
+    inserted = (
+        client.table("place_clicks")
+        .insert(
+            {
+                "property_id": property_id,
+                "place_id": place_id,
+                "place_source": place_source,
+                "context": context,
+                "session_id": session_id,
+            }
+        )
+        .execute()
+    )
+    item = inserted.data[0] if inserted.data else {}
+    return _tool_result(
+        text="Interaction tracked.",
+        structured_content={"ok": True, "click": item},
+        widget="restaurant_results",
     )
 
 
@@ -566,6 +944,19 @@ def mcp_availability_widget() -> str:
 )
 def mcp_booking_widget() -> str:
     return _render_widget_html("create_booking")
+
+
+@mcp_server.resource(
+    RESTAURANT_WIDGET_URI,
+    name="Monobook Restaurant Results Widget",
+    description="Interactive restaurant recommendation cards (curated + nearby).",
+    mime_type="text/html",
+    meta=_resource_meta(
+        "Browse curated and nearby restaurant recommendations with quick actions."
+    ),
+)
+def mcp_restaurant_widget() -> str:
+    return _render_widget_html("restaurant_results")
 
 
 _mcp_asgi_app: MCPHeaderAuthApp | None = None

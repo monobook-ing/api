@@ -19,15 +19,20 @@ from supabase import Client
 from app.agents.guardrails import validate_dates, validate_guests
 from app.crud.booking import create_booking, get_booking_by_id, get_or_create_guest
 from app.crud.chat import link_session_to_guest
+from app.crud.curated_place import list_curated_places
 from app.crud.currency import (
     get_currency_display_map,
     normalize_currency_code,
     resolve_currency_display,
 )
 from app.crud.property import get_property_by_id
+from app.core.config import get_settings
+from app.services.places import PlacesService
+from app.services.booking_notifications import notify_booking_success
 from app.services.embedding import search_similar
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 PET_FRIENDLY_KEYWORDS = (
     "pet friendly",
@@ -1116,6 +1121,7 @@ async def tool_create_booking(
         {"room_id": room_id, "check_in": check_in, "check_out": check_out},
         {"booking_id": booking["id"], "total": pricing["total"]},
     )
+    await notify_booking_success(client, booking=booking, guest_name=guest_name)
 
     return {
         "booking_id": booking["id"],
@@ -1177,4 +1183,260 @@ async def tool_get_booking_status(
         "currency": booking["currency_code"],
         "currency_code": booking["currency_code"],
         "currency_display": booking["currency_display"],
+    }
+
+
+def _normalize_terms(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _to_text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None]
+
+
+def _curated_maps_url(
+    google_place_id: str | None,
+    lat: float | None,
+    lng: float | None,
+) -> str | None:
+    if google_place_id:
+        return (
+            "https://www.google.com/maps/search/?api=1"
+            f"&query_place_id={google_place_id}"
+        )
+    if lat is not None and lng is not None:
+        return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+    return None
+
+
+def _normalize_curated_place(row: dict[str, Any]) -> dict[str, Any]:
+    lat = _to_float(row.get("lat")) if row.get("lat") is not None else None
+    lng = _to_float(row.get("lng")) if row.get("lng") is not None else None
+    photo_urls = _to_text_list(row.get("photo_urls"))
+    return {
+        "place_id": str(row.get("id", "")),
+        "source": "curated",
+        "name": row.get("name", ""),
+        "address": row.get("address"),
+        "lat": lat,
+        "lng": lng,
+        "rating": _to_float(row.get("rating")) if row.get("rating") is not None else None,
+        "review_count": int(row["review_count"]) if row.get("review_count") is not None else None,
+        "price_level": int(row["price_level"]) if row.get("price_level") is not None else None,
+        "cuisine": _to_text_list(row.get("cuisine")),
+        "phone": row.get("phone"),
+        "website": row.get("website"),
+        "photo_url": photo_urls[0] if photo_urls else None,
+        "opening_hours": row.get("opening_hours"),
+        "is_open_now": None,
+        "walking_minutes": row.get("walking_minutes"),
+        "distance_m": None,
+        "best_for": _to_text_list(row.get("best_for")),
+        "meal_types": _to_text_list(row.get("meal_types")),
+        "is_curated": True,
+        "is_sponsored": bool(row.get("sponsored", False)),
+        "maps_url": _curated_maps_url(row.get("google_place_id"), lat, lng),
+    }
+
+
+def _with_distance(
+    place: dict[str, Any],
+    property_lat: float | None,
+    property_lng: float | None,
+) -> dict[str, Any]:
+    if property_lat is None or property_lng is None:
+        return place
+
+    place_lat = place.get("lat")
+    place_lng = place.get("lng")
+    if place_lat is None or place_lng is None:
+        return place
+
+    distance_km = _haversine_distance_km(
+        float(property_lat),
+        float(property_lng),
+        float(place_lat),
+        float(place_lng),
+    )
+    distance_m = int(round(distance_km * 1000))
+    walking_minutes = max(1, int(round(distance_m / 80)))
+
+    enriched = dict(place)
+    enriched["distance_m"] = distance_m
+    if not enriched.get("walking_minutes"):
+        enriched["walking_minutes"] = walking_minutes
+    return enriched
+
+
+async def search_places_nearby(
+    client: Client,
+    property_id: str,
+    query: str = "restaurant",
+    cuisine: str = "",
+    price_level: int = 0,
+    open_now: bool = False,
+    limit: int = 8,
+    meal_type: str = "",
+    tags: str = "",
+    session_id: str | None = None,
+    source: str = "widget",
+) -> dict[str, Any]:
+    property_row = await get_property_by_id(client, property_id)
+    if not property_row:
+        return {"error": "Property not found"}
+
+    property_lat = (
+        _to_float(property_row.get("lat")) if property_row.get("lat") is not None else None
+    )
+    property_lng = (
+        _to_float(property_row.get("lng")) if property_row.get("lng") is not None else None
+    )
+    safe_limit = max(1, min(int(limit or 8), 20))
+
+    curated_rows = await list_curated_places(
+        client,
+        property_id,
+        meal_type=meal_type or None,
+        tags=tags or None,
+        limit=max(safe_limit, 12),
+    )
+
+    filtered_curated: list[dict[str, Any]] = []
+    requested_cuisine = cuisine.strip().lower()
+    for row in curated_rows:
+        if price_level and row.get("price_level") not in (None, price_level):
+            continue
+        if requested_cuisine:
+            cuisines = [str(item).lower() for item in (row.get("cuisine") or [])]
+            if requested_cuisine not in cuisines:
+                continue
+        filtered_curated.append(row)
+
+    curated = [
+        _with_distance(_normalize_curated_place(row), property_lat, property_lng)
+        for row in filtered_curated[:safe_limit]
+    ]
+
+    nearby: list[dict[str, Any]] = []
+    api_key = settings.google_places_api_key
+    if api_key and property_lat is not None and property_lng is not None:
+        google_results = await PlacesService.search_nearby(
+            client=client,
+            lat=float(property_lat),
+            lng=float(property_lng),
+            radius_m=settings.places_default_radius_m,
+            query=query or "restaurant",
+            cuisine=cuisine,
+            price_level=price_level,
+            open_now=open_now,
+            limit=safe_limit + len(curated),
+            api_key=api_key,
+        )
+        curated_google_ids = {
+            str(row.get("google_place_id"))
+            for row in filtered_curated
+            if row.get("google_place_id")
+        }
+        deduped_google = [
+            place
+            for place in google_results
+            if place.get("place_id") and place.get("place_id") not in curated_google_ids
+        ]
+        nearby = [
+            _with_distance(place, property_lat, property_lng)
+            for place in deduped_google[:safe_limit]
+        ]
+
+    result = {
+        "property_id": property_id,
+        "curated": curated,
+        "nearby": nearby,
+        "count_curated": len(curated),
+        "count_nearby": len(nearby),
+    }
+
+    await log_tool_call(
+        client=client,
+        property_id=property_id,
+        session_id=session_id,
+        tool_name="search_places_nearby",
+        description=f"Searched nearby places: '{query or 'restaurant'}'",
+        status="success",
+        source=source,
+        request_payload={
+            "query": query,
+            "cuisine": cuisine,
+            "price_level": price_level,
+            "open_now": open_now,
+            "limit": safe_limit,
+            "meal_type": meal_type,
+            "tags": _normalize_terms(tags),
+        },
+        response_payload={
+            "count_curated": len(curated),
+            "count_nearby": len(nearby),
+        },
+    )
+    return result
+
+
+async def get_curated_places(
+    client: Client,
+    property_id: str,
+    meal_type: str = "",
+    tags: str = "",
+    limit: int = 5,
+    session_id: str | None = None,
+    source: str = "widget",
+) -> dict[str, Any]:
+    property_row = await get_property_by_id(client, property_id)
+    if not property_row:
+        return {"error": "Property not found"}
+
+    property_lat = (
+        _to_float(property_row.get("lat")) if property_row.get("lat") is not None else None
+    )
+    property_lng = (
+        _to_float(property_row.get("lng")) if property_row.get("lng") is not None else None
+    )
+    safe_limit = max(1, min(int(limit or 5), 20))
+
+    rows = await list_curated_places(
+        client,
+        property_id,
+        meal_type=meal_type or None,
+        tags=tags or None,
+        limit=safe_limit,
+    )
+    items = [
+        _with_distance(_normalize_curated_place(row), property_lat, property_lng)
+        for row in rows
+    ]
+
+    await log_tool_call(
+        client=client,
+        property_id=property_id,
+        session_id=session_id,
+        tool_name="get_curated_places",
+        description="Retrieved curated places list",
+        status="success",
+        source=source,
+        request_payload={
+            "meal_type": meal_type,
+            "tags": _normalize_terms(tags),
+            "limit": safe_limit,
+        },
+        response_payload={"count": len(items)},
+    )
+
+    return {
+        "property_id": property_id,
+        "curated": items,
+        "nearby": [],
+        "count_curated": len(items),
+        "count_nearby": 0,
     }
