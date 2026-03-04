@@ -4,6 +4,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TYPE user_role AS ENUM ('superadmin', 'brand', 'admin', 'creator');
 CREATE TYPE team_member_status AS ENUM ('invited', 'accepted', 'rejected');
 CREATE TYPE notification_type AS ENUM ('welcome', 'news', 'updates', 'invite_accepted', 'booking_success');
+CREATE TYPE account_plan AS ENUM ('free', 'pro');
 
 -- Enums (new) --------------------------------------------------------------
 CREATE TYPE booking_status AS ENUM ('confirmed', 'pending', 'ai_pending', 'cancelled');
@@ -40,6 +41,7 @@ CREATE TABLE users (
 CREATE TABLE accounts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
+  plan account_plan NOT NULL DEFAULT 'free',
   is_default BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
