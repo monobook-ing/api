@@ -86,12 +86,7 @@ def _format_price_for_log(amount: float, currency_display: str) -> str:
 
 
 def _property_name_from_row(row: dict[str, Any]) -> str:
-    account = row.get("accounts")
-    if isinstance(account, list):
-        account = account[0] if account else {}
-    if isinstance(account, dict):
-        return str(account.get("name", "")).strip()
-    return ""
+    return str(row.get("name", "")).strip()
 
 
 def _room_is_pet_friendly(amenities: list[str] | None) -> bool:
@@ -448,7 +443,7 @@ async def search_hotels(
 
     properties_response = (
         client.table("properties")
-        .select("id, city, country, lat, lng, description, accounts!inner(name)")
+        .select("id, name, city, country, lat, lng, description")
         .execute()
     )
     properties_raw = properties_response.data or []

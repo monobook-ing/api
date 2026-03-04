@@ -191,6 +191,22 @@ async def confirm_magic_link(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to create team member"
                 )
+
+            property_response = (
+                client.table("properties")
+                .insert(
+                    {
+                        "account_id": account_id,
+                        "name": "My Property",
+                    }
+                )
+                .execute()
+            )
+            if not property_response.data or len(property_response.data) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create default property"
+                )
             
             new_user_created = True
             membership_status = "accepted"
@@ -520,7 +536,28 @@ async def google_signin(
                 "status": "accepted",
                 "created_by": user_id,
             }
-            client.table("team_members").insert(team_member_data).execute()
+            team_member_response = client.table("team_members").insert(team_member_data).execute()
+            if not team_member_response.data or len(team_member_response.data) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create team member",
+                )
+
+            property_response = (
+                client.table("properties")
+                .insert(
+                    {
+                        "account_id": account["id"],
+                        "name": "My Property",
+                    }
+                )
+                .execute()
+            )
+            if not property_response.data or len(property_response.data) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create default property",
+                )
 
             membership_status = "accepted"
 
