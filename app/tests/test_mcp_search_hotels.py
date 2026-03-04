@@ -91,30 +91,30 @@ def _build_storage() -> dict[str, list[dict]]:
         "properties": [
             {
                 "id": "prop-1",
+                "name": "Volosyanka Hills Hotel",
                 "city": "Volosyanka",
                 "country": "Ukraine",
                 "lat": 48.8470,
                 "lng": 23.4219,
                 "description": "Mountain hotel near ski slopes",
-                "accounts": {"name": "Volosyanka Hills Hotel"},
             },
             {
                 "id": "prop-2",
+                "name": "Lviv Central Stay",
                 "city": "Lviv",
                 "country": "Ukraine",
                 "lat": 49.8397,
                 "lng": 24.0297,
                 "description": "Downtown city stay",
-                "accounts": {"name": "Lviv Central Stay"},
             },
             {
                 "id": "prop-3",
+                "name": "Tatry Lodge",
                 "city": "Zakopane",
                 "country": "Poland",
                 "lat": 49.2992,
                 "lng": 19.9496,
                 "description": "Polish mountain retreat",
-                "accounts": {"name": "Tatry Lodge"},
             },
         ],
         "rooms": [

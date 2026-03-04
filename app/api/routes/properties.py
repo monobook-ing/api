@@ -37,7 +37,7 @@ async def create_new_property(
     current_user: dict = Depends(deps.get_current_user),
     client: Client = Depends(get_supabase),
 ):
-    """Create a new property (account + property record)."""
+    """Create a new property in the current user's account."""
     data = payload.model_dump()
     prop = await create_property(client, current_user["id"], data)
     return prop
@@ -83,7 +83,7 @@ async def delete_existing_property(
     current_user: dict = Depends(deps.get_current_user),
     client: Client = Depends(get_supabase),
 ):
-    """Delete a property and its associated account."""
+    """Delete a property only (the associated account is preserved)."""
     if not await user_owns_property(client, current_user["id"], property_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     deleted = await delete_property(client, property_id)

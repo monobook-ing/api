@@ -36,7 +36,7 @@ CREATE TABLE users (
   deleted_by UUID REFERENCES users(id) ON DELETE SET NULL
 );
 
--- Accounts = Properties (one account per property)
+-- Accounts = Tenants/Organizations (one account can own many properties)
 CREATE TABLE accounts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
@@ -92,10 +92,11 @@ CREATE TABLE magic_tokens (
 -- Property / Hotel domain tables (new)
 -- ===========================================================================
 
--- Property details extend the accounts table (account = property)
+-- Property details (many properties can belong to one account)
 CREATE TABLE properties (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  account_id UUID NOT NULL UNIQUE REFERENCES accounts(id) ON DELETE CASCADE,
+  account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
 
   -- Address
   street TEXT,

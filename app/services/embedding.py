@@ -73,7 +73,7 @@ async def embed_property(client: Client, property_id: str, api_key: str) -> int:
     # Fetch property
     prop = (
         client.table("properties")
-        .select("*, accounts(name)")
+        .select("*")
         .eq("id", property_id)
         .single()
         .execute()
@@ -82,8 +82,7 @@ async def embed_property(client: Client, property_id: str, api_key: str) -> int:
         return 0
 
     p = prop.data
-    account = p.pop("accounts", None)
-    property_name = account["name"] if account else ""
+    property_name = p.get("name", "")
 
     # Fetch rooms for amenities aggregation
     rooms = (
