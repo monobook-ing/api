@@ -41,6 +41,7 @@ CREATE TABLE users (
 CREATE TABLE accounts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
+  logo_url TEXT,
   plan account_plan NOT NULL DEFAULT 'free',
   is_default BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
