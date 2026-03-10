@@ -511,9 +511,21 @@ curl -X PUT http://localhost:8000/v1.0/properties/prop-uuid-1/payment-connection
 
 ### GET /v1.0/properties/{property_id}/metrics — Get dashboard KPIs
 ```bash
+# Default range=year
 curl http://localhost:8000/v1.0/properties/prop-uuid-1/metrics \
   -H "Authorization: Bearer $TOKEN"
+
+# Explicit month range
+curl "http://localhost:8000/v1.0/properties/prop-uuid-1/metrics?range=month" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Explicit quarter range
+curl "http://localhost:8000/v1.0/properties/prop-uuid-1/metrics?range=quarter" \
+  -H "Authorization: Bearer $TOKEN"
 ```
+Query params:
+- `range` (optional): one of `month`, `quarter`, `year` (default `year`)
+
 **Response 200:**
 ```json
 {
@@ -527,6 +539,36 @@ curl http://localhost:8000/v1.0/properties/prop-uuid-1/metrics \
   "revenue_trend": [12000, 14500, 15200, 16800, 15500, 17200, 18400, 17800, 19200, 20500, 21100, 22120]
 }
 ```
+
+---
+
+## Dashboard Recent Activity
+
+### GET /v1.0/properties/{property_id}/recent-activity — List recent booking activity
+```bash
+curl "http://localhost:8000/v1.0/properties/prop-uuid-1/recent-activity?limit=5" \
+  -H "Authorization: Bearer $TOKEN"
+```
+Query params:
+- `limit` (optional): number of rows to return (default `5`, max `20`)
+
+**Response 200:**
+```json
+{
+  "items": [
+    {
+      "booking_id": "booking-uuid-1",
+      "guest_name": "Sarah Chen",
+      "check_in": "2026-03-15",
+      "check_out": "2026-03-20",
+      "ai_handled": true,
+      "status": "confirmed",
+      "created_at": "2026-02-22T14:33:12Z"
+    }
+  ]
+}
+```
+Rows are sorted by `created_at` descending (newest first), then `booking_id` descending for stable ties.
 
 ---
 

@@ -419,44 +419,52 @@ async def seed_data(
             "check_in": "2026-03-15", "check_out": "2026-03-20", "total_price": 2100,
             "status": "confirmed", "ai_handled": True, "source": "mcp",
             "conversation_id": session_map["Sarah Chen"],
+            "created_at": "2026-02-22T14:33:12Z",
         },
         {
             "property_id": pid1, "room_id": rid2, "guest_id": guest_map["James Wilson"],
             "check_in": "2026-03-22", "check_out": "2026-03-25", "total_price": 1260,
             "status": "confirmed", "ai_handled": True, "source": "chatgpt",
             "conversation_id": session_map["James Wilson"],
+            "created_at": "2026-02-22T12:15:45Z",
         },
         {
             "property_id": pid1, "room_id": rid1, "guest_id": guest_map["Maria Garcia"],
             "check_in": "2026-03-18", "check_out": "2026-03-21", "total_price": 1260,
             "status": "ai_pending", "ai_handled": True, "source": "claude",
             "conversation_id": session_map["Maria Garcia"],
+            "created_at": "2026-02-22T11:46:20Z",
         },
         {
             "property_id": pid1, "room_id": rid2, "guest_id": guest_map["Alex Thompson"],
             "check_in": "2026-04-01", "check_out": "2026-04-05", "total_price": 1680,
             "status": "pending", "ai_handled": False,
+            "created_at": "2026-02-22T09:50:00Z",
         },
         {
             "property_id": pid1, "room_id": rid1, "guest_id": guest_map["Yuki Tanaka"],
             "check_in": "2026-03-28", "check_out": "2026-04-02", "total_price": 2520,
             "status": "confirmed", "ai_handled": True, "source": "widget",
             "conversation_id": session_map["Yuki Tanaka"],
+            "created_at": "2026-02-21T18:05:30Z",
         },
         {
             "property_id": pid1, "room_id": rid1, "guest_id": guest_map["Alex Kim"],
             "check_in": "2026-03-25", "check_out": "2026-03-28", "total_price": 867,
             "status": "ai_pending", "ai_handled": True, "source": "mcp",
+            "created_at": "2026-02-21T14:01:15Z",
         },
         {
             "property_id": pid1, "room_id": rid2, "guest_id": guest_map["Emma Laurent"],
             "check_in": "2026-03-14", "check_out": "2026-03-18", "total_price": 780,
             "status": "confirmed", "ai_handled": False, "source": "widget",
+            "created_at": "2026-02-20T20:16:10Z",
         },
         {
             "property_id": pid1, "room_id": rid2, "guest_id": guest_map["David Park"],
             "check_in": "2026-03-20", "check_out": "2026-03-24", "total_price": 780,
             "status": "confirmed", "ai_handled": True, "source": "gemini",
+            "created_at": "2026-02-20T11:30:45Z",
         },
     ]
     client.table("bookings").insert(bookings_data).execute()

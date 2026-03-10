@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
 from app.api import deps
+from app.crud.booking import get_recent_booking_activity
 from app.crud.property import user_owns_property
 from app.crud.settings import get_connections, get_dashboard_metrics, upsert_connection
 from app.db.base import get_supabase
@@ -10,6 +13,7 @@ from app.schemas.settings import (
     ConnectionResponse,
     ConnectionToggle,
     DashboardMetricsResponse,
+    RecentActivityListResponse,
 )
 
 router = APIRouter(prefix="/v1.0/properties/{property_id}", tags=["settings"])
@@ -77,12 +81,13 @@ async def toggle_payment_connection(
 @router.get("/metrics", response_model=DashboardMetricsResponse)
 async def get_metrics(
     property_id: str,
+    range_preset: Literal["month", "quarter", "year"] = Query("year", alias="range"),
     current_user: dict = Depends(deps.get_current_user),
     client: Client = Depends(get_supabase),
 ):
-    """Get dashboard metrics (last 12 data points) for a property."""
+    """Get dashboard metrics for a property within a preset date range."""
     await _check_access(client, current_user["id"], property_id)
-    rows = await get_dashboard_metrics(client, property_id, limit=12)
+    rows = await get_dashboard_metrics(client, property_id, range_preset=range_preset)
 
     if not rows:
         return DashboardMetricsResponse()
@@ -98,3 +103,16 @@ async def get_metrics(
         occupancy_trend=[float(r["occupancy_rate"]) for r in rows],
         revenue_trend=[float(r["revenue"]) for r in rows],
     )
+
+
+@router.get("/recent-activity", response_model=RecentActivityListResponse)
+async def get_recent_activity(
+    property_id: str,
+    limit: int = Query(5, ge=1, le=20),
+    current_user: dict = Depends(deps.get_current_user),
+    client: Client = Depends(get_supabase),
+):
+    """Get recent booking activity sorted by newest-created first."""
+    await _check_access(client, current_user["id"], property_id)
+    rows = await get_recent_booking_activity(client, property_id, limit=limit)
+    return RecentActivityListResponse(items=rows)

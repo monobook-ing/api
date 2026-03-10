@@ -62,6 +62,35 @@ async def get_bookings_by_property(
     return results
 
 
+async def get_recent_booking_activity(
+    client: Client, property_id: str, limit: int = 5
+) -> list[dict]:
+    response = (
+        client.table("bookings")
+        .select("id, check_in, check_out, status, ai_handled, created_at, guests(name)")
+        .eq("property_id", property_id)
+        .order("created_at", desc=True)
+        .order("id", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    results = []
+    for row in response.data or []:
+        guest = row.pop("guests", None)
+        results.append(
+            {
+                "booking_id": row.get("id"),
+                "guest_name": guest["name"] if guest else None,
+                "check_in": row.get("check_in"),
+                "check_out": row.get("check_out"),
+                "ai_handled": bool(row.get("ai_handled", False)),
+                "status": row.get("status"),
+                "created_at": row.get("created_at"),
+            }
+        )
+    return results
+
+
 async def get_bookings_by_room(client: Client, room_id: str) -> list[dict]:
     response = (
         client.table("bookings")

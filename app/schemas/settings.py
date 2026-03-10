@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -32,3 +32,17 @@ class DashboardMetricsResponse(BaseModel):
     commission_saved_trend: list[float] = []
     occupancy_trend: list[float] = []
     revenue_trend: list[float] = []
+
+
+class RecentActivityItemResponse(BaseModel):
+    booking_id: str
+    guest_name: str | None = None
+    check_in: date
+    check_out: date
+    ai_handled: bool
+    status: str
+    created_at: datetime
+
+
+class RecentActivityListResponse(BaseModel):
+    items: list[RecentActivityItemResponse]
