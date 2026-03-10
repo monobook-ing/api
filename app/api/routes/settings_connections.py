@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -81,13 +82,33 @@ async def toggle_payment_connection(
 @router.get("/metrics", response_model=DashboardMetricsResponse)
 async def get_metrics(
     property_id: str,
-    range_preset: Literal["month", "quarter", "year"] = Query("year", alias="range"),
+    range_preset: Literal["week", "month", "year", "custom"] = Query("year", alias="range"),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
     current_user: dict = Depends(deps.get_current_user),
     client: Client = Depends(get_supabase),
 ):
     """Get dashboard metrics for a property within a preset date range."""
     await _check_access(client, current_user["id"], property_id)
-    rows = await get_dashboard_metrics(client, property_id, range_preset=range_preset)
+    if range_preset == "custom":
+        if not start_date or not end_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Custom range requires start_date and end_date",
+            )
+        if start_date > end_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="start_date cannot be after end_date",
+            )
+
+    rows = await get_dashboard_metrics(
+        client,
+        property_id,
+        range_preset=range_preset,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
     if not rows:
         return DashboardMetricsResponse()

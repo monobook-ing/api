@@ -40,6 +40,10 @@ class FakeTableQuery:
         self.filters.append(lambda row, field=field, value=value: row.get(field) >= value)
         return self
 
+    def lte(self, field, value):
+        self.filters.append(lambda row, field=field, value=value: row.get(field) <= value)
+        return self
+
     def order(self, field, desc: bool = False):
         self.orders.append((field, desc))
         return self
@@ -108,6 +112,8 @@ def test_get_metrics_uses_default_year_range(monkeypatch):
         assert response.json()["ai_direct_bookings"] == 15
         assert response.json()["ai_direct_bookings_trend"] == [10, 15]
         assert metrics_mock.await_args.kwargs["range_preset"] == "year"
+        assert metrics_mock.await_args.kwargs["start_date"] is None
+        assert metrics_mock.await_args.kwargs["end_date"] is None
     finally:
         settings_test_app.dependency_overrides = {}
 
@@ -122,7 +128,7 @@ def test_get_metrics_forwards_explicit_ranges(monkeypatch):
 
     try:
         with TestClient(settings_test_app) as client:
-            for preset in ("month", "quarter", "year"):
+            for preset in ("week", "month", "year"):
                 metrics_mock.reset_mock()
                 response = client.get(
                     "/v1.0/properties/prop-1/metrics",
@@ -130,6 +136,70 @@ def test_get_metrics_forwards_explicit_ranges(monkeypatch):
                 )
                 assert response.status_code == 200
                 assert metrics_mock.await_args.kwargs["range_preset"] == preset
+                assert metrics_mock.await_args.kwargs["start_date"] is None
+                assert metrics_mock.await_args.kwargs["end_date"] is None
+
+            metrics_mock.reset_mock()
+            response = client.get(
+                "/v1.0/properties/prop-1/metrics",
+                params={
+                    "range": "custom",
+                    "start_date": "2026-02-01",
+                    "end_date": "2026-02-28",
+                },
+            )
+            assert response.status_code == 200
+            assert metrics_mock.await_args.kwargs["range_preset"] == "custom"
+            assert str(metrics_mock.await_args.kwargs["start_date"]) == "2026-02-01"
+            assert str(metrics_mock.await_args.kwargs["end_date"]) == "2026-02-28"
+    finally:
+        settings_test_app.dependency_overrides = {}
+
+
+def test_get_metrics_rejects_custom_without_required_dates(monkeypatch):
+    settings_test_app.dependency_overrides[deps.get_current_user] = _override_current_user
+    settings_test_app.dependency_overrides[get_supabase] = lambda: object()
+
+    monkeypatch.setattr(settings_routes, "user_owns_property", AsyncMock(return_value=True))
+    metrics_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(settings_routes, "get_dashboard_metrics", metrics_mock)
+
+    try:
+        with TestClient(settings_test_app) as client:
+            response = client.get(
+                "/v1.0/properties/prop-1/metrics",
+                params={"range": "custom", "start_date": "2026-02-01"},
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Custom range requires start_date and end_date"
+        metrics_mock.assert_not_awaited()
+    finally:
+        settings_test_app.dependency_overrides = {}
+
+
+def test_get_metrics_rejects_custom_inverted_dates(monkeypatch):
+    settings_test_app.dependency_overrides[deps.get_current_user] = _override_current_user
+    settings_test_app.dependency_overrides[get_supabase] = lambda: object()
+
+    monkeypatch.setattr(settings_routes, "user_owns_property", AsyncMock(return_value=True))
+    metrics_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(settings_routes, "get_dashboard_metrics", metrics_mock)
+
+    try:
+        with TestClient(settings_test_app) as client:
+            response = client.get(
+                "/v1.0/properties/prop-1/metrics",
+                params={
+                    "range": "custom",
+                    "start_date": "2026-02-10",
+                    "end_date": "2026-02-01",
+                },
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "start_date cannot be after end_date"
+        metrics_mock.assert_not_awaited()
     finally:
         settings_test_app.dependency_overrides = {}
 
@@ -247,6 +317,14 @@ def test_get_dashboard_metrics_applies_date_windows(monkeypatch):
         "dashboard_metrics": [
             {
                 "property_id": "prop-1",
+                "date": "2026-03-09",
+                "ai_direct_bookings": 12,
+                "commission_saved": 1400,
+                "occupancy_rate": 84,
+                "revenue": 9700,
+            },
+            {
+                "property_id": "prop-1",
                 "date": "2026-03-05",
                 "ai_direct_bookings": 11,
                 "commission_saved": 1200,
@@ -290,23 +368,34 @@ def test_get_dashboard_metrics_applies_date_windows(monkeypatch):
     client = FakeSupabaseClient(storage)
     monkeypatch.setattr(settings_crud, "_utc_today", lambda: date(2026, 3, 10))
 
+    week_rows = _run_async(
+        settings_crud.get_dashboard_metrics(client, "prop-1", range_preset="week")
+    )
     month_rows = _run_async(
         settings_crud.get_dashboard_metrics(client, "prop-1", range_preset="month")
-    )
-    quarter_rows = _run_async(
-        settings_crud.get_dashboard_metrics(client, "prop-1", range_preset="quarter")
     )
     year_rows = _run_async(
         settings_crud.get_dashboard_metrics(client, "prop-1", range_preset="year")
     )
+    custom_rows = _run_async(
+        settings_crud.get_dashboard_metrics(
+            client,
+            "prop-1",
+            range_preset="custom",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 2, 28),
+        )
+    )
 
-    assert [row["date"] for row in month_rows] == ["2026-03-05"]
-    assert [row["date"] for row in quarter_rows] == ["2026-01-20", "2026-03-05"]
+    assert [row["date"] for row in week_rows] == ["2026-03-05", "2026-03-09"]
+    assert [row["date"] for row in month_rows] == ["2026-03-05", "2026-03-09"]
     assert [row["date"] for row in year_rows] == [
         "2025-10-15",
         "2026-01-20",
         "2026-03-05",
+        "2026-03-09",
     ]
+    assert [row["date"] for row in custom_rows] == ["2026-01-20"]
 
 
 def test_get_recent_booking_activity_orders_by_created_at_then_id():

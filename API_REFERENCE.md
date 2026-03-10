@@ -519,12 +519,18 @@ curl http://localhost:8000/v1.0/properties/prop-uuid-1/metrics \
 curl "http://localhost:8000/v1.0/properties/prop-uuid-1/metrics?range=month" \
   -H "Authorization: Bearer $TOKEN"
 
-# Explicit quarter range
-curl "http://localhost:8000/v1.0/properties/prop-uuid-1/metrics?range=quarter" \
+# Explicit week range
+curl "http://localhost:8000/v1.0/properties/prop-uuid-1/metrics?range=week" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Explicit custom range
+curl "http://localhost:8000/v1.0/properties/prop-uuid-1/metrics?range=custom&start_date=2026-02-01&end_date=2026-02-28" \
   -H "Authorization: Bearer $TOKEN"
 ```
 Query params:
-- `range` (optional): one of `month`, `quarter`, `year` (default `year`)
+- `range` (optional): one of `week`, `month`, `year`, `custom` (default `year`)
+- `start_date` (optional): required when `range=custom`, ISO date `YYYY-MM-DD`
+- `end_date` (optional): required when `range=custom`, ISO date `YYYY-MM-DD`
 
 **Response 200:**
 ```json
